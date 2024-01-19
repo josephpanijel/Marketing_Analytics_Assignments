@@ -1,0 +1,934 @@
+---
+title: "Text Mining"
+subtitle: "Case Study: Leviev Air (2)"
+
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+---
+<center>
+![](Images/TextMining.jpg)
+
+![](Images/LEVIEV.png)
+</center>
+---
+
+## Introduction
+
+After an initial meeting in which you presented your first insights from the user-generated-data research project, the question comes up, if one can find more insights from the reviews and review headlines of the different airlines. The board is especially interested to learn if there are general patterns and topics passengers debate about when flying. The board is also interested in finding a way to measure brand equity and customer satisfaction of the competing airlines to develop an industry dashboard that tracks brand equity and customer satisfaction for the most prominent airlines.
+
+At best, you would come up with an approach that allows tracking brand equity from various user generated content sources such as airline reviews, but also social media networks such as Twitter or Instagram.
+The next day you sit down and pull all reviews available for all major airlines flying from London Heathrow and start running your analysis to answer the following questions
+
+
+*	Which airlines do see more reviews than others? 
+*	Which common issues do customers praise when flying?
+*	Which common issues do customers complain about most, when flying?
+*	How does sentiment relate to customer experience?
+*	How do passengers use emotions in their feedback when talking about different airlines?
+*	Can we leverage the review data to build a brand equity measure?
+*	Can we develop our own text-sentiment classifier to harvest airline sentiment from social media?
+
+
+```{r eval=TRUE, echo=FALSE}
+library(readr)
+library(tidyverse)
+library(tidytext)
+library(ggplot2)
+library(tidyverse)
+library(RColorBrewer)
+library(scales)
+library(ggthemes)
+library(vader)
+library(tm)
+library(SnowballC)
+
+
+Airline_Reviews_Leviev <- read_csv("Data/airlinereviews.csv")
+```
+
+The data set consists of 24391 reviews from 16 different major airlines and thus provides a sufficient level of information to base our analysis on. To explore the number of reviews per airline we can use the following code that will give us a pie chart and the relative share of reviews per airline.
+
+```{r eval=TRUE, echo=TRUE}
+Airline_Reviews_Leviev <- read_csv("Data/airlinereviews.csv")
+
+numb.rev.airline = Airline_Reviews_Leviev %>% group_by(Airline) %>% summarise(NumberofReviews = n())
+piepercent<- paste(round(100*numb.rev.airline$NumberofReviews/sum(numb.rev.airline$NumberofReviews), 1), "%", sep="")
+pie(numb.rev.airline$NumberofReviews, labels = piepercent, main = "Proportion of reviews, by airline",col = rainbow(length(numb.rev.airline$NumberofReviews)))
+legend("topright", c("Air Canada", "Air France", "Alitalia", "British Airways", "Emirates", "Etihad Airways",
+                     "Iberia", "Lufthansa", "Qatar Airways", "Singapore Airlines", "Southwest Airlines", 
+                     "Swiss Air","Thai Airways", "Turkish Airlines", "United Airlines", "Virgin Atlantic"), 
+       cex = 0.5, fill = rainbow(length(numb.rev.airline$NumberofReviews)))
+
+```
+
+To further understand how satisfied passengers are and to ensure that we equally base our analysis on positive and negative reviews, let us rely on the overall rating score, each review comes with. The following code allows us to inspect boxplots for the overall rating per airline.
+
+We use again ggplot together with dplyr (included in the package tidyverse) to prepare the boxplot graph as shown in Figure 7-2. In addition, we use RColorbrewer and ggthemes to allow us to use a non-standard color representation that matches the color-coding of other popular data visualization tools such as Tableau.
+
+```{r eval=TRUE, echo=TRUE}
+Airline_Reviews_Leviev %>% 
+  ggplot(aes(x=Airline,y=overall_rating, fill=Airline)) +
+  geom_boxplot() + geom_jitter(width=0.05,alpha=0.05) +
+  scale_fill_tableau(palette = "Tableau 20") +
+  theme(axis.text.x = element_text(angle = 90)) +
+  ggtitle("Boxplots of Overall Ratings, by Airline")
+```
+
+Boxplots allow us to easily understand the locality, spread, and skewness of numerical data. A boxplot thus shows the mean value, indicates outliers, as well as the quartiles and the range between these. Looking at e.g. Turkish Airlines we can see that the mean rating is somewhere around 4.8. The upper quartile is around 7.8 (close to the mean rating of Thai Airways). The lower quartile goes down to one. The “blurry” dots represent the values of the different reviews of each airline and we can thus also understand how many positive and negative reviews airlines got and how the distribution of ratings looks like. 
+
+
+---
+
+**Question**: 
+
+*Look at the different boxplots of the airlines and compare them.
+*What does the size of the box (how wide or narrow the box is) tell you?
+
+
+---
+
+To better understand and inspect the mean ratings we can also rely on a barchart plot which we obtain with the following code. Note that we use reorder to have the barplots in ascending order.
+
+```{r eval=TRUE, echo=TRUE}
+meanrating.airline = Airline_Reviews_Leviev %>% group_by(Airline) %>% summarise(MeanRating = mean(overall_rating, na.rm=TRUE))
+
+meanrating.airline %>% ggplot(aes(reorder(Airline,MeanRating), MeanRating)) + 
+  geom_col() + 
+  xlab("Airlines") + ylab("Mean Rating") + 
+  geom_text(aes(label = round(MeanRating, digits = 2)),
+            size = 2, colour = "white", 
+            position = position_stack(vjust = 0.5)) +  theme(axis.text.x = element_text(angle = 90)) +
+  ggtitle("Mean ratings, by airline")
+```
+
+Both, the boxplots as well as the bar chart, indicate that we have enough variation in our reviews to continue with our analysis. We can thus start with trying to understand how favorably (or unfavorably) passengers write about an airline. 
+
+### Sentiment Analysis
+
+Let us first see how Top-Down Sentiment Classifiers work and how we can extract emotion and sentiment information with the help of the NRC dictionary.
+
+In R the EmoLex NRC dictionary is implemented in various packages. We recommend to use the tidytext package, as it allows for best text handling and has furthermore been shown to be superior in speed and computational needs. After loading the package, we can now use the inbuilt EmoLex NRC function to gain a first understanding of which airlines face which types of emotions, by looking at the mean emotion levels per airline. We start, with the following code. 
+
+```{r eval=TRUE, echo=TRUE}
+Airline_Reviews_Leviev$ReviewNumb = 1:24391
+AirlineReviews_Words <- Airline_Reviews_Leviev %>% mutate(ReviewNumb = 1:24391) %>% 
+  unnest_tokens(word, review_text)
+```
+
+Looking at the created AirlineReviews_Words dataframe, you will quickly realize that added now two more colums to the initial frame. ReviewNumb simply assigns a number from 1 to 24391 to each review. With unnest_tokens with additionally now created for each word in a review a separate row. Screening through the dataframe you can see that we now have for review 1 93 rows, which corresponds to the total number of words written in review 1. This also explains, why the dataframe now consists of 3,580,738 rows, as this is the number of reviews multiplied by the number of words used in total. If you look at the different words in the word column, you will quickly realize that the majority of words used here, do not have a real emotional meaning. E.g. we can not infer anything from words such as “and”, “the”, or “that”. These words are however frequently applied and thus complicate sentiment measurement, as our computer needs to also read through them, while trying to find words from the emotion lists. To help, we can simply delete all words, which do not provide too much meaning with the help of another dictionary. Words without much meaning potential are commonly referred to as stopwords. There are many stopword lists, one can use (or adapt by adding other words, one does not want to have included). In tidytext, we can achieve this by simply applying the following command. 
+
+
+```{r eval=TRUE, echo=TRUE}
+AirlineReviews_Words <- AirlineReviews_Words %>%
+  anti_join(stop_words, by = "word")
+```
+
+
+Via anti_join we simply tell R to lookup all words in the stop_words list and drop rows, which contain a stopword from the dataframe. Looking into our environment, we can now see that the dataframe substantially shrank, and now “only” incorporates 1,476,635 rows. This will make it now also much easier for our computer to count the emotion words. 
+
+
+```{r eval=TRUE, echo=TRUE}
+AirlineReviews_Sentiment <- AirlineReviews_Words %>%
+  inner_join(get_sentiments("nrc")) %>%
+   count(Airline, index = ReviewNumb, sentiment) %>%
+  pivot_wider(names_from = sentiment, values_from = n, values_fill = 0) 
+
+head(AirlineReviews_Sentiment)
+```
+
+
+The resulting data frame now shows how many times a word from each emotion category appears in each review. We can take this information and now calculate the airline-specific mean emotion values.
+
+```{r eval=TRUE, echo=TRUE}
+AirlineReviews_Sentiment_Means = AirlineReviews_Sentiment %>%
+  group_by(Airline) %>% summarise(
+    MeanAnger = mean(anger),
+    MeanDisgust = mean(disgust),
+    MeanFear = mean(fear),
+    MeanSadness = mean(sadness),
+    MeanNegative = mean(negative),
+    MeanAnticipation = mean(anticipation),
+    MeanSurprise = mean(surprise),
+    MeanTrust = mean(trust),
+    MeanJoy = mean(joy),
+    MeanPositive = mean(positive) 
+  ) %>% mutate(MeanSentiment = MeanPositive - MeanNegative)
+```
+
+
+Subsequently, we can now take this dataframe to plot the values for each airline. To ensure a good overview, we can also split the frame into three new frames, for the positive and the negative emotions, as well as for the general sentiment scores.
+
+```{r eval=TRUE, echo=TRUE}
+AirlineReviews_NegMeansWide <- AirlineReviews_Sentiment_Means %>%
+  select(Airline, MeanAnger, MeanDisgust, MeanFear, MeanSadness) %>%
+  gather(key = "variable", value = "value", -Airline)
+
+
+AirlineReviews_NegMeansWide %>% 
+  ggplot(aes(x=Airline,y=value, fill=Airline)) +
+  geom_col() + geom_jitter(width=0.05,alpha=0.05) + 
+  scale_fill_tableau(palette = "Tableau 20") +
+  geom_text(aes(label = round(value, digits = 2)),
+    size = 2, colour = "white", 
+    position = position_stack(vjust = 0.5)) +
+  theme(axis.text.x = element_text(angle = 90)) + facet_wrap(~variable, ncol = 2) +
+  ggtitle("Mean Values of Negative Emotions, by Airline")
+
+
+AirlineReviews_PosMeansWide <- AirlineReviews_Sentiment_Means %>%
+  select(Airline, MeanJoy, MeanAnticipation, MeanSurprise, MeanTrust) %>%
+  gather(key = "variable", value = "value", -Airline)
+
+AirlineReviews_PosMeansWide %>% 
+  ggplot(aes(x=Airline,y=value, fill=Airline)) +
+  scale_fill_tableau(palette = "Tableau 20") +
+  geom_col() + geom_jitter(width=0.05,alpha=0.05) +
+  geom_text(aes(label = round(value, digits = 2)),
+            size = 2, colour = "white", 
+            position = position_stack(vjust = 0.5)) +
+  theme(axis.text.x = element_text(angle = 90)) + facet_wrap(~variable, ncol = 2) +
+  ggtitle("Mean Values of Positive Emotions, by Airline")
+
+
+AirlineReviews_SentimentMeansWide <- AirlineReviews_Sentiment_Means %>%
+  select(Airline, MeanPositive, MeanNegative, MeanSentiment) %>%
+  gather(key = "variable", value = "value", -Airline)
+
+AirlineReviews_SentimentMeansWide %>% 
+  ggplot(aes(x=Airline,y=value, fill=Airline)) +
+  scale_fill_tableau(palette = "Tableau 20") +
+  geom_col() + geom_jitter(width=0.05,alpha=0.05) +
+  geom_text(aes(label = round(value, digits = 2)),
+            size = 2, colour = "white", 
+            position = position_stack(vjust = 0.5)) +
+  theme(axis.text.x = element_text(angle = 90)) + facet_wrap(~variable, ncol = 1) +
+  ggtitle("Mean Values of Sentiment Scores, by Airline")
+```
+
+We can also use the emotion information to see how different airlines are from each other. Do you remember the concept of the Euclidean distance, which we discussed in the STP and clustering chapter? We can simply calculate the distance across all airlines based on the mean emotions. We can subsequently use a method called multidimensional scaling (MDS) to plot the airlines in a 2-dimensional space, based on the Euclidean distances we just calculated.
+
+```{r eval=TRUE, echo=TRUE}
+Airlines_MeanEmotions  = AirlineReviews_Sentiment_Means[,1:10]
+EmotionDistance_Airlines = as.matrix(dist(Airlines_MeanEmotions))
+rownames(EmotionDistance_Airlines) <- AirlineReviews_Sentiment_Means$Airline
+
+MDS_Emotions <- cmdscale(EmotionDistance_Airlines,eig=TRUE, k=2)
+x <- MDS_Emotions$points[,1]
+y <- MDS_Emotions$points[,2]
+plot(x, y, xlab="Dimension 1", ylab="Dimension 2", 
+     main="MDS Airlines by Emotions in Reviews", type="n")
+text(x, y, labels = row.names(EmotionDistance_Airlines), cex=.7)
+```
+
+---
+
+**Question**: 
+
+Looking at the different groups of airlines in the plot, what do you think does it mean if an airline is more on the bottom? What does it mean if an airline is more on the right than on the left hand side of the plot?
+
+---
+
+### Rule Based Top-Down Analysis
+
+While basic dictionaries such as LIWC and NRC provide a quick and reliable way to capture words related to different forms and levels of sentiment, they often face the problem that they do not take the context in which a word occurs into account. This can quickly become an issue, if we for example think about the following example. 
+
+
+“I did not like the airline there was no good service and no one cared about us”
+
+
+If we ignore the negation, the review actually consists of several words which are commonly assigned to a positive sentiment such as like, good, and care. Many dictionaries would thus come to the wrong conclusion, by simply counting the occurrence of words, which belong to a positive sentiment category. 
+
+
+Similarly, reviews may be ambiguous with different types of sentiment being assigned to two different entities like displayed in the following example: "It was a shitty holiday with a lot of rain and a bad hotel, but Alitalia was great and we love the service." Here the negative sentiment only targets the weather and the hotel, but does explicitly spare the corresponding airline. Simply counting again, the occurrence of words, does not help, as the total number of negative sentiment words is twice the number of positive words. 
+
+
+Furthermore, the way people write, may also indicate something about the strength of emotion involved. Take the following two reviews: 
+
+“I love Allitalia” and “I LOVE AlIitalia!!!!” 
+
+You will certainly agree, that the latter expresses more emotion than the first one, as it is written in caps and the love for Allitalia is further underlined by four exclamation marks at the end of the sentence. Again, simply counting the occurrence of positive words, would lead to a wrong result, as both reviews only consist of one positive word (love).  At last, we also witness that digital communication is changing and that consumers adapt their linguistic styles. Often emotions are not only expressed by words, but also by symbols. Think about emojis, emoticons (i.e. ;-)) or common abbreviations such as lol (laughing out loud) or rofl (rolling on floor laughing), which made their way into our everyday online conversations. Most established dictionaries do net yet list these new terms and will thus similarly ignore these.
+
+VADER is a rule-based dictionary, which means, it does take context into account and controls if a word stands together with a negation, or if a sentiment is enforced by e.g. exclamation marks or being written in caps (Hutto and Gilbert 2014). While VADER was initially developed for Python, there is now a package available, that allows us to use VADER also in R. Given the rule implementation, the benefit of accounting for context, comes of course at a cost: time. Applying VADER to larger sets of reviews of comments, will consume substantially more time than for example NRC. Still, often the waiting time is worth the effort. Let us now see how well VADER performs. We first build vectors with our special sentences.
+
+```{r eval=TRUE, echo=TRUE}
+Clear_Review = "It was a shitty holiday with a lot of rain and a bad airline"
+Negations_Review = "I did not like the airline there was no good service and no one cared about us."
+Ambigious_Review = "It was a shitty holiday with a lot of rain and a bad hotel, but Alitalia was great and we love the service."
+Symbolic_Review = "Alitalia is my <3!!!! Always :-D"
+NoExclamation_Review = "I love Alitalia"
+Exclamation_Review = "I LOVE Alitalia!!!!"
+```
+
+We can now use the following code to calculate the sentiment of each sentence.
+
+```{r eval=TRUE, echo=TRUE}
+Sentiment_Clear_Review = get_vader(Clear_Review, incl_nt = T, neu_set = T, rm_qm = F)
+Sentiment_Negations_Review = get_vader(Negations_Review, incl_nt = T, neu_set = T, rm_qm = F)
+Sentiment_Ambigious_Review = get_vader(Ambigious_Review, incl_nt = T, neu_set = T, rm_qm = F)
+Sentiment_Symbolic_Review = get_vader(Symbolic_Review, incl_nt = T, neu_set = T, rm_qm = F)
+Sentiment_NoExclamation = get_vader(NoExclamation_Review, incl_nt = T, neu_set = T, rm_qm = F)
+Sentiment_Exclamation = get_vader(Exclamation_Review, incl_nt = T, neu_set = T, rm_qm = F)
+```
+
+If we now compare the compound results in the VADER dataframe, we can see, that the rule-based dictionary was able to account for all specifics in our specially composed sentences. In addition, we can see how it assigns a sentiment score to each word in the sentences (word_scores) as well as the general positive and negative sentiment.
+
+```{r eval=TRUE, echo=TRUE}
+VADER = bind_rows(Sentiment_Clear_Review, Sentiment_Negations_Review, Sentiment_Ambigious_Review,
+                  Sentiment_Symbolic_Review, Sentiment_NoExclamation, Sentiment_Exclamation)
+
+Text_vader = c(Clear_Review, Negations_Review, Ambigious_Review, Symbolic_Review, NoExclamation_Review, Exclamation_Review)
+VADER$Text = Text_vader
+head(VADER)
+```
+
+### Bottom-Up Analysis
+
+While Top-Down sentiment analysis relies on pre-curated lists which commonly originate from previous research studies and are the result of thorough qualitative research work, bottom-up sentiment analysis is trying to “build” own dictionaries with the help of supervised machine learning. Here, we use textual data, where we know already the sentiment, to infer probabilities that the occurrence of words (or word combinations) represent a positive or negative sentiment (or any other category we are interested in such as satisfaction, recommendation, disgust, etc.). The textual data we infer the probabilities from is commonly referred to as training data. Training data can be obtained from various sources. For example, one may use human coders to classify a set of texts into the categories of interest (i.e. positive or negative sentiment) and use these texts as training data. 
+
+Given that we have already overall rating scores, we can follow the latter approach and split our own review data set in two data sets, containing only negative and positive reviews.
+
+```{r eval=TRUE, echo=TRUE}
+Negative_Reviews = Airline_Reviews_Leviev %>% filter(overall_rating < 2)
+Positive_Reviews = Airline_Reviews_Leviev %>% filter(overall_rating > 8)
+
+set.seed(123)
+
+Negative_Reviews_Sample = sample_n(Negative_Reviews, 2000)
+Positive_Reviews_Sample = sample_n(Positive_Reviews, 2000)
+
+BottomUpDF = data.frame(sentiment = "positive", text = Positive_Reviews_Sample$title)
+BottomUpDF = rbind(BottomUpDF, data.frame(sentiment = "negative", text = Negative_Reviews_Sample$title))
+```
+
+
+Once we have the sets of positive and negative reviews, we can randomly extract 2000 positive and 2000 negative reviews, which will then serve as our training data. Of course, you can use more (or less) data, according to the computational power at your hand. Another trick here to save computational power and to be not too overdemanding to our laptops is to use only the title of the reviews and not the whole review text, as we can assume that the title will perfectly summarize the review and thus contain the main sentiment. 
+
+
+Once we randomly selected the reviews, we bind them together in the dataframe BottomUpDF, that now contains the titles as well as the information if the title origins from the “positive” or “negative” sentiment set. We can then continue to further prepare the textual information and to make life a bit easier for our computers, by transferring all text to lower case (otherwise the algorithm would treat airline and Airline as two different words), removing any punctuation as elements such as commas, etc. do not provide much meaning, clean the corpus from stopwords, and stem all words to their common form, which again helps to remove redundancies in the data and making the set slimmer. Finally, we can use the removeSparseTerms function to identify words, which occur only rarely and which will thus similarly not provide too much information (here we drop words, which only occur in 0.5% of all documents; feel free to try out other cut-off values). 
+
+
+The resulting dataframe tSparse now has for each word included in our training data set a column, and indicates for each document (rows) if a word occurs or not (1/0). Such matrices are commonly referred to as a Document Term Matrix. At last, we use prop.table to show us the distribution of positive and negative review titles in our data set. The output indicates that we have a perfectly balanced training data set at our hand that consists of 50% negative and 50% positive review titles. 
+
+```{r eval=TRUE, echo=TRUE}
+corpus = Corpus(VectorSource(BottomUpDF$text))
+corpus = tm_map(corpus, PlainTextDocument)
+corpus = tm_map(corpus, tolower)
+corpus = tm_map(corpus, removePunctuation)
+corpus = tm_map(corpus, removeWords, c("cloth", stopwords("english")))
+corpus = tm_map(corpus, stemDocument)
+frequencies = DocumentTermMatrix(corpus)
+sparse = removeSparseTerms(frequencies, 0.995)
+tSparse = as.data.frame(as.matrix(sparse))
+colnames(tSparse) = make.names(colnames(tSparse))
+tSparse$sentiment = BottomUpDF$sentiment
+prop.table(table(tSparse$sentiment))
+```
+
+
+We can now start with training a basic machine learning model that allows us to determine whether a new review (or any other airline-specific text) is positive or negative. 
+
+To be able to later assess the quality of our sentiment classifier, we have to again split our training data set into the “real” training set and into a test set. The test set will allow us later to determine how accurate our sentiment predictions are, as we can first predict the sentiment with the help of the sentiment classifier and to compare the predictions with the known sentiment.
+
+We rely here on an 80/20 split but feel free to try out other compositions. 
+
+```{r eval=TRUE, echo=FALSE}
+library(caTools)
+```
+
+```{r eval=TRUE, echo=TRUE}
+set.seed(100)
+split = sample.split(tSparse$sentiment, SplitRatio = 0.8)
+trainSparse = subset(tSparse, split==TRUE)
+testSparse = subset(tSparse, split==FALSE)
+```
+
+We can now start with using the trainSparse set to develop our classifier. We will rely on a common classification algorithm, called Random Forrest. The algorithm will try to infer for each word in our DTM the probability that this word occurs in a positive or a negative review title. Given that the randomForrest function requires factors as input, we also adapt our matrix accordingly, before training the model with the following code. Don’t mind if this takes a while.
+
+```{r eval=TRUE, echo=FALSE}
+library(randomForest)
+```
+
+```{r eval=TRUE, echo=TRUE}
+set.seed(100)
+trainSparse$sentiment = as.factor(trainSparse$sentiment)
+testSparse$sentiment = as.factor(testSparse$sentiment )
+RF_model = randomForest(sentiment ~ ., data=trainSparse)
+```
+
+
+Basically, we now already have the classifier ready. Nevertheless, we need to understand how well it predicts. So, we need to go ahead and predict the sentiment of all review titles in our test set to see how many times the model correctly predicts negative and positive titles. We can achieve this with the following code. First, we use the predict function to predict the sentiment scores of our training data and then see how many often we classify correctly. 
+
+```{r eval=TRUE, echo=TRUE}
+predictRF = predict(RF_model, newdata=testSparse)
+table(testSparse$sentiment, predictRF)
+```
+
+So, it turs out that we correctly predicted negative sentiments in 330 cases and we correctly predicted positive sentiment in the case of 324 titles. We have 76 false-positive classifications and 70 false-negative classifications. To understand the quality of our model, we can compute the accuracy measure as follows: 
+
+Accuracy = Number of correctly classified titles / Total number of titles
+Accuracy = (330+324)/800 = 0.8175. 
+
+So, this means in 81.75% of classifications, our classifier comes to the correct result. This is already a rather good fit. Still, we can do better, as we will see in the next paragraph.
+
+### Vector-Based Bottom-Up Analysis
+
+So far, we relied on the pure occurrence of words in a document to infer the sentiment probabilities. However, we saw before that the context in which a word is embedded also matters. The latest developments such as Word2Vec in NLP account for this. 
+
+Luckily, R’s text2vec package provides us already with pre-trained word-embedding vectors, which we can use for our sentiment analysis and building a sentiment classifier that accounts for word co-occurrences. For more details on how these vectors have been estimated, we recommend looking up the great vignette and website of the package.
+
+We can access the package and start building our model with the following code.
+
+```{r eval=TRUE, echo=FALSE}
+library(text2vec)
+library(data.table)
+```
+
+```{r eval=TRUE, echo=TRUE}
+
+# Train and Test Data
+
+Negative_Reviews = Airline_Reviews_Leviev %>% filter(overall_rating < 2)
+Positive_Reviews = Airline_Reviews_Leviev %>% filter(overall_rating > 8)
+
+set.seed(123)
+
+Negative_Reviews_Sample = sample_n(Negative_Reviews, 2000)
+Positive_Reviews_Sample = sample_n(Positive_Reviews, 2000)
+
+BottomUpDF = data.frame(sentiment = "positive", text = Positive_Reviews_Sample$title)
+BottomUpDF = rbind(BottomUpDF, data.frame(sentiment = "negative", text = Negative_Reviews_Sample$title))
+BottomUpDF$id = 1:4000
+
+index = sample(1:nrow(BottomUpDF), size = .80 * nrow(BottomUpDF))
+
+train = BottomUpDF[index, ]
+test = BottomUpDF[-index, ]
+```
+
+Similar to our Random Forrest example we start again by building a training and test data set, that we can use for evaluating the accuracy of our sentiment classifier. To make things comparable we use the same number of randomly drawn review titles and split again 80/20. 
+Furthermore, we apply again similar pre-processing steps and lower all words.
+
+```{r eval=TRUE, echo=TRUE}
+# define preprocessing function and tokenization function
+prep_fun = tolower
+tok_fun = word_tokenizer
+
+it_train = itoken(train$text,
+                  preprocessor = prep_fun,
+                  tokenizer = tok_fun,
+                  ids = train$id,
+                  progressbar = FALSE)
+vocab = create_vocabulary(it_train)
+
+train_tokens = tok_fun(prep_fun(train$text))
+it_train = itoken(train_tokens,
+                  ids = train$id,
+                  progressbar = FALSE)
+
+vocab = create_vocabulary(it_train)
+vectorizer = vocab_vectorizer(vocab)
+dtm_train = create_dtm(it_train, vectorizer)
+```
+
+Now we can start with training the model with the following command. We tell the glmnet function where it can find the training data (dtm_train) and which variable is the outcome variable of interest (sentiment). The other values in the function are tuning parameters, which can be ignored for now. In case you want to go in more detail here, we recommend to consult the vignette of the text2vec package. 
+
+```{r eval=TRUE, echo=FALSE}
+library(glmnet)
+```
+
+```{r eval=TRUE, echo=TRUE}
+NFOLDS = 4
+glmnet_classifier = cv.glmnet(x = dtm_train, y = train[['sentiment']],
+                              family = 'binomial',
+                              alpha = 1,
+                              type.measure = "auc",
+                              nfolds = NFOLDS,
+                              thresh = 1e-3,
+                              maxit = 1e3)
+
+print(paste("max AUC =", round(max(glmnet_classifier$cvm), 4)))
+
+it_test = tok_fun(prep_fun(test$text))
+it_test = itoken(it_test, ids = test$id,progressbar = FALSE)
+```
+
+To assess the accuracy of our model, we can again make a prediction for our test data set and see how many correctly predicted titles we get. We achieve this with the following code.
+
+```{r eval=TRUE, echo=TRUE}
+dtm_test = create_dtm(it_test, vectorizer)
+
+preds = predict(glmnet_classifier, dtm_test, type = 'response')[,1]
+glmnet:::auc(as.factor(test$sentiment), preds)
+```
+
+The output indicates that we reach an accuracy of more than 91% which is already impressive and indicates that our model is doing a great job in predicting sentiment. 
+To allow Leviev Air to now use this model, to predict customer sentiment in any sort of conversation, we can apply the following code and see how well our model is predicting any sort of text we throw at it. Let us test the following six statements:
+
+*	“I really hate this airline”
+*	"Never again with AlItalia", 
+*	"They really suck in all dimensions"
+*	"Great Service and Great Hospitality on Board", 
+*	"Awesome Experience and really nice staff!!"
+*	"Best Airline ever! Will Fly Again with Qantas"
+
+We need to again apply the same pre-processing to the new text as we did to our training data to enable the model to interpret it. Then we can simply apply the predict function and combine the prediction with the text. 
+
+```{r eval=TRUE, echo=TRUE}
+## Make Predictions for New Headlines
+NewTextData = c("The service was good, we had a flight without any difficulties, food was delicious, pilots were super informative",
+"Fuck Turkish Airlines, this was really the worst experience I ever had. We were super late, the plane was too croweded and service was chaotic.",
+"I really hate this airline", "Never again with Alitalia", 
+                "They really suck in all dimensions", "Great Service and Great Hospitality on Board", 
+                "Awesome Experience and really nice staff!!", "Best Airline ever! Will Fly Again with Qantas")
+
+NewTextDataDF = data.frame(text= NewTextData, id = 4001:4008)
+it_NewData = tok_fun(prep_fun(NewTextDataDF$text))
+it_NewData = itoken(it_NewData, ids = NewTextDataDF$id,progressbar = FALSE)
+
+dtm_NewData = create_dtm(it_NewData, vectorizer)
+
+preds_NewData = predict(glmnet_classifier, dtm_NewData, type = 'class')[,1]
+NewTextDataDF$SentimentPrediction = preds_NewData
+knitr::kable(head(NewTextDataDF), "pipe")
+```
+
+Congratulations, our efforts really paid off. Our classifier correctly predicted the sentiments of all our new text input. Maybe you would like to play around a bit and try out other comments? 
+
+
+---
+
+**Question**: 
+
+Playing around with different input texts, what do you believe are the boundaries of the current classifier? How could Leviev Air extend it? Or if they do not wish to do so, for which use cases can this classifier be used, for which not?
+
+---
+
+### Topic Modelling
+
+Topic Models such as Latent Dirichlet Allocation (LDA) or Structural Topic Models (STM) share the idea that documents are composed of various (latent) topics. Topic Models allow us to discover these hidden topics and to then classify each document to a topic (or various). Think about different books you like. You will be easily able to assign them each to a specific genre by remembering the content. Topic Models do the same. They rely on the content of various documents to first infer a (pre-set) number of topics to then subsequently assign the documents to the identified topics (genres). LDA models belong to the pioneering topic models and are today amongst the most widely applied models. They take the assumption that each document is composed by various words. Similarly, each topic shares a set of common words which are specific for the corresponding topic. The ultimate goal of the LDA is thus to identify the various topics a document belongs to, based on the words a document shares with a specific topic. LDAs belong to the group of unsupervised machine learning algorithms (for more details see our Churn Prediction chapter) and is thus comparable to the cluster analysis algorithms we witnessed in our STP chapter at the beginning of this book.
+
+R features multiple packages, which enable us to conduct a topic model. We recommend using the topicmodel package, as it offers the most versatile but still very approachable setup and has many useful functions integrated, that e.g. allow to parallelize processes, which will come handy, in case you face larger data sets and require to estimate multiple LDA models at the same time. We first re-use the dataframe that only contains negative reviews (and which we constructed for the word2vec sentiment analysis). This will allow us to first focus on which topics consumers commonly dislike when flying and to then later see, which airlines face which topics/complaints most. We again first create a Corpus that then contains the textual data from the reviews. We continue to apply the common text cleaning procedures that we have encountered before. Now the corpus is ready to enter the LDA.
+
+```{r eval=TRUE, echo=FALSE}
+library(topicmodels)
+library(ldatuning)
+library(tm)
+```
+
+```{r eval=TRUE, echo=TRUE}
+## Topic Models for Negative Reviews
+Overall_corpus_Negative <- VCorpus(VectorSource(Negative_Reviews$review_text))
+
+#Text Cleaning
+Overall_corpus_clean.Negative <- tm_map(Overall_corpus_Negative, content_transformer(tolower))
+Overall_corpus_clean.Negative <- tm_map(Overall_corpus_clean.Negative, removeNumbers)
+Overall_corpus_clean.Negative <- tm_map(Overall_corpus_clean.Negative, stemDocument)
+Overall_corpus_clean.Negative <- tm_map(Overall_corpus_clean.Negative, removeWords, stopwords(kind = "SMART"))
+Overall_corpus_clean.Negative <- tm_map(Overall_corpus_clean.Negative, removePunctuation)
+Overall_corpus_clean.Negative <- tm_map(Overall_corpus_clean.Negative, stripWhitespace) 
+
+#Adapt DF for dropped documents due to cleaning
+Overall_dtm.Negative <- DocumentTermMatrix(Overall_corpus_clean.Negative)
+ui = unique(Overall_dtm.Negative$i)
+dtm.new.negative = Overall_dtm.Negative[ui,]
+```
+
+Remember the k-mean cluster analysis we conducted in the STP chapter? Here we also needed to decide apriori how many clusters we suspected within the data set. For LDA it is the same. We need to tell the algorithm how many latent topics we assume to be in the data. This is not always easy, as we might have an idea, but given that we – commonly – are not able to really read all content, we often have a hard time finding an adequate number of topics. 
+
+The ldatuning package in R provides us with a straight-forward solution to do that. We simply have to determine the corridor of topics and the package will estimate all different LDA models and compare them. Keep in mind that this of course will take some time and require enough computational power. We can try it with the following code.
+
+As you can see, we can specify in the FindTopicsNumber function the corridor of topics we want to try out. Here we want to see anything between 4 and 12 topics. Feel free to try out different corridors. To speed up the process, the same function also allows us to parallelize the estimation, which means we can estimate multiple LDA models at the same time. This however requires our computer to also have multiple CPU cores ready, as each core can take care of one model. You can adjust the mc.cores parameter to your specific setting. We put as default here 4, as most modern laptops have at least 4 cores or more ready. 
+
+
+```{r eval=TRUE, echo=TRUE}
+## Identify Topic Number
+
+negative.result <- FindTopicsNumber(
+  dtm.new.negative,
+  topics = seq(from = 4, to = 12, by = 1),
+  metrics = c("CaoJuan2009", "Deveaud2014"),
+  method = "Gibbs",
+  control = list(seed = 77),
+  # mc.cores represents the number of CPUs available in your computer. Feel free to adapt to your own setting!
+  mc.cores = 4L,
+  verbose = TRUE
+)
+
+FindTopicsNumber_plot(negative.result)
+```
+
+The number of topics correlates with the topic distances and thus suggest a density-based topic selection criteria that should be minimized. Alternatively, we can focus on semantic coherence and maximize the score of Deceaud. This approach assumes that in case of models, which are semantically coherent, all topic specific words (indicated by their topic specific occurrence probability), should also co-occur within the same type of documents. Both measures provide guidance, but rarely indicate together the same solution. Here the Cao measure suggests the 12 topic solution, while the Deceaud indicator suggests a 8 topic solution (with the Cao also showing at least a local minimum for 8 topics). We suggest that you do not only base your decision on these indicators, but also on the interpretability of the LDA results. Therefore, it often makes sense to subsequently estimate different LDA models (here between 8 and 12 topics) and to focus on the usability and interpretability of the output. In the interest of space and time, we however suggest here to focus on the 8-topic solution and to continue with an 8-topic LDA as follows. 
+
+```{r eval=TRUE, echo=TRUE}
+## Run LDA
+k=8
+control_list_gibbs <- list(
+  burnin = 2500, #set burn in
+  iter = 5000,#set iterations
+  seed = 1500,
+  nstart = 5,  #set random starts at 5
+  best = TRUE, # return the highest probability as the result
+  alpha = 50/k,
+  delta = 0.1)
+
+set.seed(1500)
+negative_lda <- LDA(dtm.new.negative, k=8, method="Gibbs", contol=control_list_gibbs)
+```
+
+We can use the control_list_gibbs list to specify some of the LDA model characteristics such as the total number of iterations before the LDA stops or the seeding points for the random words. For more details, we recommend checking the help file of the topicmodels package and the corresponding vignette. Our suggested starting points turn out to be good for ordinary models, but if you like to tweak the model further, you may try alternative alpha and delta values. Once the model converged we can focus on the output and try to understand which topics the model identified. To get there, we will first plot the top words per topic with the following code. The corresponding output is shown in Figure 7-13. Figure 7-14 shows the corresponding output for the positive reviews. The code for this LDA can be found in the markdown for this chapter. 
+
+```{r eval=TRUE, echo=TRUE}
+## Prepare Output
+tidy_negative_lda <- tidy(negative_lda)
+
+top_terms_negative <- tidy_negative_lda %>%
+  group_by(topic) %>%
+  top_n(10, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+top_terms_negative %>%
+  mutate(term = reorder(term, beta)) %>%
+  group_by(topic, term) %>%    
+  arrange(desc(beta)) %>%  
+  ungroup() %>%
+  mutate(term = factor(paste(term, topic, sep = "__"), 
+                       levels = rev(paste(term, topic, sep = "__")))) %>%
+  ggplot(aes(term, beta, fill = as.factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  coord_flip() +
+  scale_x_discrete(labels = function(x) gsub("__.+$", "", x)) +
+  labs(title = "Top 10 terms in each negative review LDA topic",
+       x = NULL, y = expression(beta)) +
+  facet_wrap(~ topic, ncol = 4, scales = "free")
+```
+
+
+---
+
+**Question**: 
+
+Looking at above's plots what kind of topics do you see here? Can you come up with meaningful topic names? 
+
+---
+
+### Airline Insights
+
+To assess which topics are associated with a specific airline, we first need to assign to each review the different topic probabilities, which we can do with the following code.
+
+```{r eval=TRUE, echo=TRUE}
+##Match Topics to Reviews
+
+Negative_Reviews.Corrected <- Negative_Reviews[ui, ]
+Negative_Reviews.wlables = cbind(Negative_Reviews.Corrected, negative_lda@gamma)
+ldaresults.negative = as.data.frame(negative_lda@gamma)
+
+names(Negative_Reviews.wlables)[13] <- "Topic1"
+names(Negative_Reviews.wlables)[14] <- "Topic2"
+names(Negative_Reviews.wlables)[15] <- "Topic3"
+names(Negative_Reviews.wlables)[16] <- "Topic4"
+names(Negative_Reviews.wlables)[17] <- "Topic5"
+names(Negative_Reviews.wlables)[18] <- "Topic6"
+names(Negative_Reviews.wlables)[19] <- "Topic7"
+names(Negative_Reviews.wlables)[20] <- "Topic8"
+```
+
+We extract the topic probabilities (gammas) from the estimated LDA model and add them to the dataframe with the reviews. Finally, we rename the columns. 
+We can now count the occurrence of each topic in each review. To do so we have to think about, when we want to label a review, i.e. when we believe the topic probability to be high enough to say that a review contains a specific topic. The advantage of this approach is that we allow reviews to contain more than one topic, compared to other common approaches, where one labels a review only with the topic with the highest probability.  
+
+---
+
+**Question**: 
+
+Which value should a topic probability in this case exceed to label a review with a topic? 
+
+---
+
+
+```{r eval=TRUE, echo=TRUE}
+CutoffDf.Negative <- Negative_Reviews.wlables %>% filter(Topic1 >= 0.25 | Topic2 >= 0.25|Topic3 >= 0.25 | Topic4 >= 0.25 | Topic5 >= 0.25 | Topic6 >= 0.25 | Topic7 >= 0.25 | Topic8 >= 0.25) 
+CutoffDf.Negative$Topic1Count <- ifelse(CutoffDf.Negative$Topic1 >= 0.25, 1,0)
+CutoffDf.Negative$Topic2Count <- ifelse(CutoffDf.Negative$Topic2 >= 0.25, 1,0)
+CutoffDf.Negative$Topic3Count <- ifelse(CutoffDf.Negative$Topic3 >= 0.25, 1,0)
+CutoffDf.Negative$Topic4Count <- ifelse(CutoffDf.Negative$Topic4 >= 0.25, 1,0)
+CutoffDf.Negative$Topic5Count <- ifelse(CutoffDf.Negative$Topic5 >= 0.25, 1,0)
+CutoffDf.Negative$Topic6Count <- ifelse(CutoffDf.Negative$Topic6 >= 0.25, 1,0)
+CutoffDf.Negative$Topic7Count <- ifelse(CutoffDf.Negative$Topic7 >= 0.25, 1,0)
+CutoffDf.Negative$Topic8Count <- ifelse(CutoffDf.Negative$Topic8 >= 0.25, 1,0)
+
+TopicCount.Negative <- CutoffDf.Negative %>% group_by(Airline) %>% summarize(
+  Topic1 = sum(Topic1Count), Topic2 = sum(Topic2Count), 
+  Topic3 = sum(Topic3Count), Topic4 = sum(Topic4Count), 
+  Topic5 = sum(Topic5Count), Topic6 = sum(Topic6Count), 
+  Topic7 = sum(Topic7Count), Topic8 = sum(Topic8Count))
+```
+
+
+
+While the absolute numbers are already interesting, it may also make sense to look at the relative shares per airlines, which we obtain by dividing each value, by the sum of reviews per airline. We can finally achieve this with the following code. 
+
+
+
+```{r eval=TRUE, echo=TRUE}
+TopicCount.Negative$sum = rowSums(TopicCount.Negative[,2:9])
+
+WeightedTopics.Negative = data.frame(Airline = TopicCount.Negative$Airline, 
+                                     Topic1 = round(TopicCount.Negative$Topic1/TopicCount.Negative$sum,2), 
+                                     Topic2 = round(TopicCount.Negative$Topic2/TopicCount.Negative$sum,2), 
+                                     Topic3 = round(TopicCount.Negative$Topic3/TopicCount.Negative$sum,2), 
+                                     Topic4 = round(TopicCount.Negative$Topic4/TopicCount.Negative$sum,2), 
+                                     Topic5 = round(TopicCount.Negative$Topic5/TopicCount.Negative$sum,2), 
+                                     Topic6 = round(TopicCount.Negative$Topic6/TopicCount.Negative$sum,2), 
+                                     Topic7 = round(TopicCount.Negative$Topic7/TopicCount.Negative$sum,2),
+                                     Topic8 = round(TopicCount.Negative$Topic8/TopicCount.Negative$sum,2))
+
+WeightedTopicsName.Negative = data.frame(Airline = TopicCount.Negative$Airline, 
+                                         Seating = round(TopicCount.Negative$Topic1/TopicCount.Negative$sum,2),
+                                         Food = round(TopicCount.Negative$Topic2/TopicCount.Negative$sum,2), 
+                                         Delays = round(TopicCount.Negative$Topic3/TopicCount.Negative$sum,2), 
+                                         Customer_Service = round(TopicCount.Negative$Topic4/TopicCount.Negative$sum,2), 
+                                         Booking = round(TopicCount.Negative$Topic5/TopicCount.Negative$sum,2), 
+                                         USFlights = round(TopicCount.Negative$Topic6/TopicCount.Negative$sum,2), 
+                                         Baggage = round(TopicCount.Negative$Topic7/TopicCount.Negative$sum,2),
+                                         Staff = round(TopicCount.Negative$Topic8/TopicCount.Negative$sum,2))
+
+row.names(WeightedTopicsName.Negative) = WeightedTopicsName.Negative$Airline
+WeightedTopicsName.Negative$Airline <- NULL
+
+WeightedTopicsNameDF.Negative <- as.data.frame(t(WeightedTopicsName.Negative))
+```
+
+---
+
+**Question**: 
+
+Looking at the topic shares of negative and positive reviews, and comparing these across airlines, which topics do you believe to be essentially important for high class airlines?
+
+---
+
+
+There are many ways to visualize the shares (e.g. barcharts), but we want to end this chapter with some WOW effect, and thus suggest a circular barchart
+
+
+```{r eval=TRUE, echo=FALSE}
+library(circlize)
+```
+
+```{r eval=TRUE, echo=TRUE}
+FinalCircDF.Negative = as.matrix(WeightedTopicsNameDF.Negative)
+
+testcirc.Negative =  data.frame(from = rep(rownames(FinalCircDF.Negative), times = ncol(FinalCircDF.Negative)),
+                       to = rep(colnames(FinalCircDF.Negative), each = nrow(FinalCircDF.Negative)),
+                       value = as.vector(FinalCircDF.Negative),
+                       stringsAsFactors = FALSE)
+
+grid.col.negative = c(Seating = "chocolate2", Food = "magenta3",
+                      Delays = "chartreuse3",
+            Customer_Service = "khaki3", 
+             Booking = "aquamarine4", USFlights = "navy", 
+             Baggage = "gold2", Staff = "gray34",
+             `Air Canada` = "red2", `Air France` = "blue1", 
+             Alitalia = "darkgreen", `British Airways` = "mediumblue", 
+             Emirates = "gold", `Etihad Airways` = "firebrick2", 
+             Iberia = "orangered2", Lufthansa = "blue4",
+             `Qatar Airways` = "darkmagenta", `Singapore Airlines` = "darkgoldenrod3",
+            `Southwest Airlines` = "firebrick1",
+             `Swiss Airlines` = "red", `Thai Airways` = "violetred4",
+             `Turkish Airlines` = "darkred", `United Airlines` = "steelblue",
+             `Virgin Atlantic` = "magenta4")
+
+circos.clear()
+par(cex = .6)
+chordDiagram(testcirc.Negative, grid.col = grid.col.negative,  big.gap = 15)
+```
+
+With the following code we can replicate the circular barplot for the positive reviews.
+
+```{r eval=TRUE, echo=TRUE}
+## Positive Reviews LDA
+
+Overall_corpus_Positive <- VCorpus(VectorSource(Positive_Reviews$review_text))
+
+# Text Pre Processing
+Overall_corpus_clean.Positive <- tm_map(Overall_corpus_Positive, content_transformer(tolower))
+Overall_corpus_clean.Positive <- tm_map(Overall_corpus_clean.Positive, removeNumbers)
+Overall_corpus_clean.Positive <- tm_map(Overall_corpus_clean.Positive, stemDocument)
+Overall_corpus_clean.Positive <- tm_map(Overall_corpus_clean.Positive, removeWords, stopwords(kind = "SMART"))
+Overall_corpus_clean.Positive <- tm_map(Overall_corpus_clean.Positive, removePunctuation)
+Overall_corpus_clean.Positive <- tm_map(Overall_corpus_clean.Positive, stripWhitespace) 
+
+#Clean
+Overall_dtm.Positive <- DocumentTermMatrix(Overall_corpus_clean.Positive)
+ui = unique(Overall_dtm.Positive$i)
+dtm.new.Positive = Overall_dtm.Positive[ui,]
+
+## Identify Topic Number
+
+set.seed(12345)
+
+Positive.result <- FindTopicsNumber(
+  dtm.new.Positive,
+  topics = seq(from = 4, to = 12, by = 1),
+  metrics = c("Griffiths2004", "CaoJuan2009", "Arun2010", "Deveaud2014"),
+  method = "Gibbs",
+  control = list(seed = 77),
+  mc.cores = 4L,
+  verbose = TRUE
+)
+
+FindTopicsNumber_plot(Positive.result)
+
+## Run LDA
+
+k=9
+
+control_list_gibbs <- list(
+  burnin = 2500, #set burn in
+  iter = 5000,#set iterations
+  seed = 1500,
+  nstart = 5,  #set random starts at 5
+  best = TRUE, # return the highest probability as the result
+  alpha = 50/k,
+  delta = 0.1
+)
+
+set.seed(1500)
+
+#Estimate 9 Topic LDA
+
+Positive_lda <- LDA(dtm.new.Positive, k=9, method="Gibbs", contol=control_list_gibbs)
+
+tidy_Positive_lda <- tidy(Positive_lda)
+
+top_terms_Positive <- tidy_Positive_lda %>%
+  group_by(topic) %>%
+  top_n(10, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+top_terms_Positive %>%
+  mutate(term = reorder(term, beta)) %>%
+  group_by(topic, term) %>%    
+  arrange(desc(beta)) %>%  
+  ungroup() %>%
+  mutate(term = factor(paste(term, topic, sep = "__"), 
+                       levels = rev(paste(term, topic, sep = "__")))) %>%
+  ggplot(aes(term, beta, fill = as.factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  coord_flip() +
+  scale_x_discrete(labels = function(x) gsub("__.+$", "", x)) +
+  labs(title = "Top 10 terms in each positive review LDA topic",
+       x = NULL, y = expression(beta)) +
+  facet_wrap(~ topic, ncol = 3, scales = "free")
+
+##Match Topics to Reviews
+
+Positive_Reviews.Corrected <- Positive_Reviews[ui, ]
+Positive_Reviews.wlables = cbind(Positive_Reviews.Corrected, Positive_lda@gamma)
+ldaresults.Positive = as.data.frame(Positive_lda@gamma)
+Assign.Positive = apply(ldaresults.Positive, 1, which.max)
+Positive_Reviews.wlables = cbind(Positive_Reviews.wlables, Assign.Positive)
+
+names(Positive_Reviews.wlables)[13] <- "Topic1"
+names(Positive_Reviews.wlables)[14] <- "Topic2"
+names(Positive_Reviews.wlables)[15] <- "Topic3"
+names(Positive_Reviews.wlables)[16] <- "Topic4"
+names(Positive_Reviews.wlables)[17] <- "Topic5"
+names(Positive_Reviews.wlables)[18] <- "Topic6"
+names(Positive_Reviews.wlables)[19] <- "Topic7"
+names(Positive_Reviews.wlables)[20] <- "Topic8"
+names(Positive_Reviews.wlables)[21] <- "Topic9"
+
+
+CutoffDf.Positive <- Positive_Reviews.wlables %>% filter(Topic1 >= 0.25 | Topic2 >= 0.25|Topic3 >= 0.25 | Topic4 >= 0.25 | Topic5 >= 0.25 | Topic6 >= 0.25 | Topic7 >= 0.25 | Topic8 >= 0.25 | Topic9 >= 0.25) 
+CutoffDf.Positive$Topic1Count <- ifelse(CutoffDf.Positive$Topic1 >= 0.25, 1,0)
+CutoffDf.Positive$Topic2Count <- ifelse(CutoffDf.Positive$Topic2 >= 0.25, 1,0)
+CutoffDf.Positive$Topic3Count <- ifelse(CutoffDf.Positive$Topic3 >= 0.25, 1,0)
+CutoffDf.Positive$Topic4Count <- ifelse(CutoffDf.Positive$Topic4 >= 0.25, 1,0)
+CutoffDf.Positive$Topic5Count <- ifelse(CutoffDf.Positive$Topic5 >= 0.25, 1,0)
+CutoffDf.Positive$Topic6Count <- ifelse(CutoffDf.Positive$Topic6 >= 0.25, 1,0)
+CutoffDf.Positive$Topic7Count <- ifelse(CutoffDf.Positive$Topic7 >= 0.25, 1,0)
+CutoffDf.Positive$Topic8Count <- ifelse(CutoffDf.Positive$Topic8 >= 0.25, 1,0)
+CutoffDf.Positive$Topic9Count <- ifelse(CutoffDf.Positive$Topic9 >= 0.25, 1,0)
+
+TopicCount.Positive <- CutoffDf.Positive %>% group_by(Airline) %>% summarize(
+  Topic1 = sum(Topic1Count), Topic2 = sum(Topic2Count), 
+  Topic3 = sum(Topic3Count), Topic4 = sum(Topic4Count), 
+  Topic5 = sum(Topic5Count), Topic6 = sum(Topic6Count), 
+  Topic7 = sum(Topic7Count), Topic8 = sum(Topic8Count),
+  Topic9 = sum(Topic9Count))
+
+TopicCount.Positive$sum = rowSums(TopicCount.Positive[,2:10])
+
+WeightedTopics.Positive = data.frame(Airline = TopicCount.Positive$Airline, 
+                                     Topic1 = round(TopicCount.Positive$Topic1/TopicCount.Positive$sum,2), 
+                                     Topic2 = round(TopicCount.Positive$Topic2/TopicCount.Positive$sum,2), 
+                                     Topic3 = round(TopicCount.Positive$Topic3/TopicCount.Positive$sum,2), 
+                                     Topic4 = round(TopicCount.Positive$Topic4/TopicCount.Positive$sum,2), 
+                                     Topic5 = round(TopicCount.Positive$Topic5/TopicCount.Positive$sum,2), 
+                                     Topic6 = round(TopicCount.Positive$Topic6/TopicCount.Positive$sum,2), 
+                                     Topic7 = round(TopicCount.Positive$Topic7/TopicCount.Positive$sum,2),
+                                     Topic8 = round(TopicCount.Positive$Topic8/TopicCount.Positive$sum,2),
+                                     Topic9 = round(TopicCount.Positive$Topic9/TopicCount.Positive$sum,2))
+
+WeightedTopicsName.Positive = data.frame(Airline = TopicCount.Positive$Airline, 
+                                         Seating = round(TopicCount.Positive$Topic1/TopicCount.Positive$sum,2),
+                                         Luxury = round(TopicCount.Positive$Topic2/TopicCount.Positive$sum,2), 
+                                         USTraveling = round(TopicCount.Positive$Topic3/TopicCount.Positive$sum,2), 
+                                         Cabin_Experience = round(TopicCount.Positive$Topic4/TopicCount.Positive$sum,2), 
+                                         Food = round(TopicCount.Positive$Topic5/TopicCount.Positive$sum,2), 
+                                         MiddleEast = round(TopicCount.Positive$Topic6/TopicCount.Positive$sum,2), 
+                                         Plane = round(TopicCount.Positive$Topic7/TopicCount.Positive$sum,2),
+                                         Gate_Experience = round(TopicCount.Positive$Topic8/TopicCount.Positive$sum,2),
+                                         Loyalty = round(TopicCount.Positive$Topic9/TopicCount.Positive$sum,2))
+
+row.names(WeightedTopicsName.Positive) = WeightedTopicsName.Positive$Airline
+WeightedTopicsName.Positive$Airline <- NULL
+
+WeightedTopicsNameDF.Positive <- as.data.frame(t(WeightedTopicsName.Positive))
+
+## Build Circle
+
+FinalCircDF.Positive = as.matrix(WeightedTopicsNameDF.Positive)
+
+testcirc.Positive =  data.frame(from = rep(rownames(FinalCircDF.Positive), times = ncol(FinalCircDF.Positive)),
+                                to = rep(colnames(FinalCircDF.Positive), each = nrow(FinalCircDF.Positive)),
+                                value = as.vector(FinalCircDF.Positive),
+                                stringsAsFactors = FALSE)
+
+grid.col.Positive = c(Seating = "chocolate2", Luxury = "magenta3",
+                      USTraveling = "chartreuse3",
+                      Cabin_Experience = "khaki3", 
+                      Food = "aquamarine4", MiddleEast = "navy", 
+                      Plane = "gold2", Gate_Experience = "gray34", Loyalty = "lightblue3",
+                      `Air Canada` = "red2", `Air France` = "blue1", 
+                      Alitalia = "darkgreen", `British Airways` = "mediumblue", 
+                      Emirates = "gold", `Etihad Airways` = "firebrick2", 
+                      Iberia = "orangered2", Lufthansa = "blue4",
+                      `Qatar Airways` = "darkmagenta", `Singapore Airlines` = "darkgoldenrod3",
+                      `Southwest Airlines` = "firebrick1",
+                      `Swiss Airlines` = "red", `Thai Airways` = "violetred4",
+                      `Turkish Airlines` = "darkred", `United Airlines` = "steelblue",
+                      `Virgin Atlantic` = "magenta4")
+
+gaps.positive = c("Seating" = 2, "Luxury" = 2, "USTraveling" = 2, 
+                  "Cabin_Experience" = 2, "Food" = 2, "MiddleEast" = 2,
+                  "Plane" = 2, "Gate_Experience" = 2, "Loyalty" = 10, 
+                  "Air Canada" = 2, "Air France" = 2, "AlItalia" = 2,
+                  "British Airways" = 2, "Emirates" = 2, "Etihad Airways" = 2, 
+                  "Iberia" = 2, 
+                  "Lufthansa" = 2, "Qatar Airways" = 4, 
+                  "Singapore Airlines" = 4, "Soutwehst Airlines" = 4, 
+                  "Swiss Airlines" = 2, "Thai Airways" = 2, "Turkish Airlines" = 4,
+                  "United Airlines" = 2, "Virgin Atlantic" = 10)
+
+circos.clear()
+par(cex = .7)
+circos.par(start.degree = 85, gap.after = gaps.positive)
+chordDiagram(testcirc.Positive, grid.col = grid.col.Positive, scale = TRUE)
+```

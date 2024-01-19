@@ -1,0 +1,684 @@
+---
+title: Demand Forecasting
+output: html_document
+---
+
+<br/>
+
+#### Silverline Built-in Appliances
+
+
+![](forecasting.png){width=900px}
+
+
+
+It was a sunny day in Istanbul. The chief marketing officer (CMO) of Silverline, an award-winning Turkish supplier of built-in appliances for cooking, cooling and dishwashing, was on a video call with the sales manager (SM) from his office. In a worried voice, the SM said: 
+
+*“Look- we have great appliances. All of our retailers say that customers love them. But our favourite store in Istanbul complains about the same issue over and over again. They fall far short of our products- in particular the extractor fans. As a result, they point the end-consumers to competitors’ products. This is a big opportunity loss for us. We should do something about this.”* 
+
+Then, a silence fell upon the room and the CMO said: 
+
+*“You are right. My heart also bleeds when I see our great products fail to take their deserved share in the market. We should keep good ties with all the retailers as they are the gatekeepers to the market. On top of this, perhaps we need to bring an analytical demand forecasting solution at a store level. What do you think?”*  
+
+The SM responded excitedly: 
+
+*“Your point on having an analytical solution is great! As far as I know, the use of analytical approaches in our sector is not very common. If we have an automated demand forecasting tool and apply it for each store, we may have a huge advantage compared to our competitors.For stores with the stockout issue, we can try to predict the future demand in a similar store and use that as an estimate”*  
+
+The CMO was happy that her voice was echoed by the SM: 
+
+*“Perfect! Why do not we dive right into this? I will talk to the production team and try to find out how to build a data analytics team that can provide some data-driven solutions.”*   
+ 
+The following day, the CMO had a meeting with the production team and towards the end of the meeting said: *“I am so excited. Let’s build this analytics team together. The team will use some analytical tools and tell us how the demand will look like in the next several months.This way, we can support the stores that have out-of-stock problems in relation to our extractor fans.”* 
+
+Not long after, the analytics team started to work with a data set of a similar store to the one highlighted in the case. The data covered the historical monthly sales of an extractor fan over a time span of 122 months. 
+
+The question was straightforward:    
+
+What would be the future demand for this product over the next year?
+
+<br/>
+
+---
+
+To address the question of the case study, we will use three modelling approaches: 
+
+1. Autoregressive Integrated Moving Average (ARIMA) 
+
+2. Simple Exponential Smoothing (SES) 
+
+3. Holt-Winters' Model 
+
+---
+
+<br/>
+
+### Dowloading the R packages 
+
+```{r include=FALSE}
+
+# if you are using Windows, you might try to install the following packages if you are not able to proceed:
+#install.packages("installr",repos = "http://cran.us.r-project.org")
+
+#install.rtools()
+#install.pandoc()
+ 
+```
+
+We download the R packages that are needed to run the code for this case study. 
+
+```{r, eval=TRUE, error=FALSE, warning=FALSE, message=FALSE}
+# We download the packages needed for this session.
+
+if(!require(forecast)) install.packages("forecast",repos = "http://cran.us.r-project.org")
+if(!require(fpp2)) install.packages("fpp2",repos = "http://cran.us.r-project.org")
+if(!require(stargazer)) install.packages("stargazer",repos = "http://cran.us.r-project.org")
+if(!require(tseries)) install.packages("tseries",repos = "http://cran.us.r-project.org")
+if(!require(knitr)) install.packages("knitr",repos = "http://cran.us.r-project.org")
+if(!require(kableExtra)) install.packages("kableExtra",repos = "http://cran.us.r-project.org")
+if(!require(readxl)) install.packages("readxl",repos = "http://cran.us.r-project.org")
+if(!require(ggfortify)) install.packages("ggfortify",repos = "http://cran.us.r-project.org")
+if(!require(modelr)) install.packages("modelr",repos = "http://cran.us.r-project.org")
+
+
+library(tidyverse)
+library(fpp2) 
+library(knitr)
+library(kableExtra)
+library(readxl)
+library(forecast)
+library(tseries)
+library(stargazer)
+library(ggplot2)
+library(modelr)
+library(vars)
+library(ggfortify)
+```
+
+<br/>
+
+Next, we set up the working directory and load the data set. 
+
+```{r include=TRUE}
+# Please run the following codes depending on the operating system on your laptop/PC. 
+
+# if you are using iOS, you may want to set your working directory to Downloads folder and download your dataset into that folder:
+
+#setwd("~/Downloads/demand_forecasting")
+
+# if you are using Windows, you may want to set your working directory to the downloads folder in H drive:
+
+#setwd("H:/downloads/demand_forecasting")
+
+
+data <- read_excel("silverline_data.xlsx")
+
+```
+
+<br/>
+
+### Data Visualisation
+
+We may want to have a quick look at how the data set and variables look like. As an example, we can generate a table that provides a brief preview of the first 10 rows of our data set as follows: 
+
+```{r echo=TRUE}
+data_view <- data [1:10, 1:2]
+
+kable(data_view, table.attr = "style='width:50%;'" ) %>% kable_classic(full_width = T, position = "center", )
+
+```
+
+<br/>
+
+To get a feel of the data patterns, it is usually a good practice to perform a visual inspection. Here, we will obtain the simple time series plot of the raw data using the *ts.plot* function.
+
+<br/>
+
+```{r}
+ts.plot(data$Sales, col="blue", main="Sales")
+
+```
+
+
+---
+
+**Question**: What is your interpretation of this plot? Is there a seasonal or trend pattern in the data? 
+
+---
+
+We are ready to proceed to model estimation and prediction. We will perform the following steps for each of the models: 
+
+* Split the data into training and test set, and estimate a demand forecasting model using the training set;
+
+* Predict sales in the test set and evaluate forecast accuracy via the root mean squared error (RMSE).
+
+* Re-estimate the forecasting model using the whole data set and generate sales predictions for the next 12 months. 
+
+Finally, we will compare the models based on the RMSE metric and pick the best model. 
+
+
+### ARIMA model
+
+We will build an ARIMA model following the procedure summarized below:
+
+- Perform unit root tests to check for non-stationarity in the data and perform differencing if necessary.
+
+- Obtain the ACF and PACF plots to determine the order of lags and hence the specification of ARIMA.
+
+- Split the data into training and test sets, and estimate an ARIMA model using the training set and predict sales using the test set. We will evaluate forecast accuracy via the RMSE metric.
+
+- Generate the sales forecast for the next twelve months.
+
+<br/>
+
+**Log transformation**
+
+The visual inspection of the sales performance plot suggests that there is some variation in the data. To reduce the variation, we will take the logarithm:  
+
+```{r}
+
+data$LSales <- log(data$Sales)
+
+#If your variable contains zero values, you should add a small number (e.g. 1) before you do the log transformation: 
+
+#data$LSales <- log(data$Sales+1)
+
+```
+
+Note that our sales data do not contain zero values. However, in some other data sets we may observe variables data that take zero values. In such cases,we need to add a small number (e.g., 1) to each observation in the data before we do the log transformation. In doing so, we avoid having *log (0)*, which is undefined.
+
+<br/>
+
+**Stationarity test**
+
+As introduced in the chapter, there are multiple tests for testing stationarity, including the ADF, KPSS, and Phillips-Perron test. In this application, we demonstrate the procedure with the ADF test. Recall that under the ADF test, the null and alternative hypotheses are:
+
+- $H_{0}$: The data is not stationary.
+- $H_{a}$: The data is stationary. 
+
+If the p-value from the ADF test is smaller than a certain significance level (e.g .05), we should reject the null hypothesis and conclude that the variable is stationary.  
+
+To run the ADF test, we need to first let R know that sales is a time series variable. To this end, we use the *ts* function.  
+
+<br/> 
+
+```{r warning=FALSE}
+LSales <- ts(data$LSales, frequency = 12, start = c(1, 1))
+
+adf.test(LSales)
+
+```
+
+We reject the null hypothesis because the obtained p-value, .01, is smaller than the significance level, .05. Therefore, the ADF test result suggests that the series is stationary. 
+
+<br/>
+
+**ACF and PACF analysis**
+
+A systematic way to determine the order of lags for the autoregressive (AR) and moving average (MA) components of ARIMA model is to plot and inspect the ACF and PACF graphs. Here we use the R function *ggtsdisplay*, which can generate (i) the plot of the series over time, (ii) the ACF plot, and (iii) the PACF plot, simultaneously: 
+
+<br/>
+
+```{r}
+Sales <- ts(data$LSales, frequency = 12, start = c(1, 1))
+ggtsdisplay(Sales) #trend plot and ACF and PACF.
+
+```
+
+
+In the ACF and PACF plots, the dashed horizontal lines represent the upper and lower bounds of the critical region (i.e. 95% confidence level). The lag order of the AR and MA components is identified by the behaviour of the PACF and ACF plots. We find that both ACF and PACF have a cut-off at lag 1. This suggests that we should probably take a lag order of 1 for both MA and AR components. Given that we did not take the difference of the sales series, the specification of the non-seasonal part of our model is ARIMA (1,0,1). 
+
+Furthermore, the sales data show a recurring pattern and the ACF plot displays a sinusoidal waves. This kind of pattern suggests the existence of seasonality in the data. Therefore, the best specification would be seasonal ARIMA (1,0,1) (1,0,1). Note that at this point we assume the same number of lags for the AR and MA components in the seasonal part. However, we will explore this specification in more detail below when we discuss the model estimation.   
+
+<br/>
+
+#### Data split 
+
+To examine the ARIMA model's predictive ability, we need to split the data into training (in-sample) and test (out-of-sample) sets. 
+
+To do this, we apply the most commonly adopted 80/20 rule, i.e. we use the first 80% of the observations for the training set and the remaining 20% for the test set. Given that we have 122 observations in total, we should use the first 96 observations for the training set, and the remaining 25 observations for the test set. See below. 
+
+```{r warning=FALSE}
+#Splitting the data into training and testing sets
+
+lag_Sales <- data$LSales[1:121]
+Month <- ts(data$Time, frequency=12, start = c(1, 1))
+data.prep <- data.frame(window(cbind(Month,LSales)))[2:122,]
+data.final <- data.frame(data.prep, lag_Sales)
+
+arima.train <- data.final[1:96,]
+arima.test <-data.final[97:121,]
+
+```
+
+<br/>
+
+#### Model estimation
+
+Recall that the ACF and PACF analysis suggests the seasonal ARIMA (1,0,1) (1,01) model specification. To estimate this model using the training set, we use the R function *Arima*:
+
+
+```{r echo=TRUE, warning=FALSE}
+#Estimating the ARIMA model using our training set:
+
+fit_arima <- Arima(ts(LSales[1:96], frequency = 12),order = c(1,0,1), seasonal = c(1,0,1))
+
+summary(fit_arima)
+
+```
+
+This output shows: 
+
+* the estimated model parameters p, q , P and Q (displayed as 'ar1', 'ma1', 'sar1' and 'sma1', respectively) and their standard errors. For example, p is estimated to be 0.2565 and its standard error is 0.1963.  
+
+* the residuals variance $\sigma^2$ (displayed as 'sigma^2') and the model fit statistics (log likelihood, AIC, AICc and BIC). 
+
+* the error metrics (ME, RMSE, MAE and so on). 
+
+Although we relied on the ACF and PACF analysis for model identification, we may want to estimate ARIMA models with different specifications and compare model performances based on model fit statistics such as AIC and BIC. 
+
+There are also other R functions that can automatically pick the specifications with the lowest AIC and BIC--for example, *auto.arima*. However, we should keep in mind that model identification with an automated procedure may sometimes provide misleading results. For instance, some firms might operate within a certain cycle and would want to evaluate sales using a specific order of lags. 
+
+<br/>
+
+#### Forecast performance evaluation of seasonal ARIMA 
+
+Next, we evaluate the forecast performance of the model using the fitted model parameters.  
+
+```{r, message=FALSE, warning=FALSE}
+
+# Predict sales based on seasonal ARIMA model estimations
+predict_arima <- predict(fit_arima, newdata=arima.test, n.ahead = 25)
+
+#Plot the actual and predicted sales on the same graph
+
+data_plot <- data.frame(arima.test$Month,arima.test$LSales, predict_arima$pred)
+
+ggplot(data_plot, aes(arima.test.Month)) + 
+  geom_line(aes(y = arima.test.LSales, colour="Actual Sales")) + 
+  geom_line(aes(y = predict_arima$pred, colour = "Predicted Sales: SARIMA"),linetype="longdash") 
+
+```
+
+<br/>
+
+This plot suggests that the predicted sales based on the seasonal ARIMA model can mimic (to a certain extent) the general pattern of actual sales in the test set. To determine which method does a relatively more accurate job, we will calculate and compare the root mean squared error (RMSE) of both predictions. 
+
+<br/>
+
+#### Sales forecast using seasonal ARIMA 
+
+The below code computes the RMSE metric for the seasonal ARIMA model. 
+
+```{r, message=FALSE, warning=FALSE}
+# Calculate RMSE of prediction results using MLR and ARIMA method.
+
+rmse.predict_arima <- (sum((arima.test$LSales - predict_arima$pred )^2)/25)^0.5
+
+rmse.predict_arima
+```
+
+The RMSE of our seasonal ARIMA model is 0.387.
+
+Finally, we will re-estimate the seasonal ARIMA model using the full data set, and then generate twelve-month sales forecasts. 
+
+```{r, message=FALSE, warning=FALSE}
+fit_arima_final <- Arima(ts(LSales, frequency = 12),order = c(1,0,1), seasonal = c(1,0,1))
+
+#Sales forecasts 
+forecast_arima_final<-fit_arima_final %>% forecast(h=12)
+
+forecast_arima_final
+
+```
+
+<br/>
+
+This output shows the point forecasts for the next twelve months along with the prediction intervals. *Lo80* and *Hi80* show the lower and upper bounds of the prediction interval at .80 probability.Similarly,  *Lo95* and *Hi95* show the lower and upper bounds of the prediction interval at .95 probability. For example, the first row suggests that with a .80 probability, the next month's logged sales will fall within the range of [4.725, 5.564]. Similarly, with a .95 probability, the next month's logged sales will fall within the range of [4.503, 5.786].
+
+
+We can plot these forecasts and display the prediction intervals as follows: 
+
+```{r}
+#Plot sales forecasts in the next 12 months or observations) using SARIMA 
+fit_arima_final %>% forecast(h=12) %>% autoplot()
+```
+
+<br/>
+
+Note that these are the forecasts for the sales data in logarithm. Therefore, we need to convert the logged sales forecasts to sales forecasts in level. We do this by taking the exponentiation of the forecasts.See below. 
+
+```{r}
+forecast_sales_arima_final <- exp(forecast_arima_final$mean)
+
+# If we add 1 to the raw data before we take the log, then we should run the following code instead. 
+# forecast_sales_arima_final <- exp(forecast_arima_final$mean)-1
+
+forecast_sales_arima_final
+```
+
+
+These are our final sales forecasts using the seasonal ARIMA modelling approach. Now we proceed to the second method: Holt-Winters'. 
+
+### Holt-Winters' method
+
+First, we create a training set:   
+
+```{r}
+hw_train <- ts(LSales[1:96], frequency = 12)
+```
+
+<br/>
+
+##### Model fitting with Holt-Winters' method
+
+Before we predict future values, we will need to fit the Holt-Winters' model to the data. If we deal with many time series data simultaneously, we may simply want to call the Holt-Winters' function in R and let the software figure out the tuning parameters of the model on its own. We also have the opportunity to tune the fit manually by setting tuning variables:
+
+**alpha**: The parameter for the *level* equation. A higher alpha puts more weight on the most recent observations.
+
+**beta**: The parameter for the *trend* equation. A higher beta means the trend slope is more dependent on recent trend slopes.
+
+**gamma**: The parameter for the *seasonality* equation. A higher gamma puts more weight on the most recent seasonal observations.
+
+For further information about model parameters, please see the corresponding chapter of the book. 
+
+For model fitting, we may have two approaches: 
+
+1. HW1: This refers to the model where R automatically finds the best alpha, beta, and gamma values. 
+
+2. HW2: This refers to the model where we specify alpha, beta, and gamma to be 0.2, 0.1, and 0.2, respectively. We plot the fitted values versus the raw data to see the quality of the model fit. We may want to try different values for alpha, beta, and gamma to see how the fit changes.
+
+The below code obtains the model fit using both approaches, HW1 and HW2. 
+
+
+```{r}
+
+HW1 <- HoltWinters(hw_train)
+
+# Custom Holt-Winters' fitting
+HW2 <- HoltWinters(hw_train, alpha=0.2, beta=0.1, gamma=0.1)
+
+#Visually evaluate the fits
+plot(hw_train, ylab="Sales",xlim=c(1,9))
+lines(HW1$fitted[,1], lty=2, col="blue")
+lines(HW2$fitted[,1], lty=2, col="red")
+
+```
+
+<br/>
+
+In the figure, the black line is the sales data in log-level. The blue dashed line shows the model fit based on HW1 while the red dashed line represents the model fit based on HW2. 
+
+Next, we will evaluate forecast performance using the Holt-Winters' method. 
+
+<br/>
+
+#### Forecast performance evaluation using Holt-Winters' method
+
+First, we will generate the predicted sales in the test set based on the HW1 model fit:  
+
+```{r}
+#Forecasting
+HW1.pred <- predict(HW1, 26, prediction.interval = TRUE, level=0.95)
+#Visually evaluate the prediction
+plot(hw_train, ylab="Monthly Sales", xlim=c(1,11), ylim=c(2,9))
+lines(HW1$fitted[,1], lty=2, col="blue")
+lines(HW1.pred[,1], col="red")
+lines(HW1.pred[,2], lty=2, col="orange")
+lines(HW1.pred[,3], lty=2, col="orange")
+
+```
+
+In this plot, the black line is the sales data in log-level. Blue dashed line is the estimated sales based on HW1 model fit. The red solid line is the predicted sales over the next quarter while the orange dashed lines are the upper and lower bounds of the prediction interval with .95 probability. 
+
+
+**Multiplicative seasonality**
+
+When we use the Holt-Winters' method to fit the data, we may also want to tune the behavior of the seasonality component.The standard Holt-Winters uses an additive seasonality — which assumes that the amplitude of any seasonality components are relatively constant throughout the series. However, if we use multiplicative seasonality, we allow the seasonal variations to grow with the overall level of the data. To see how that works, we will perform the model fitting, generate forecasts, and compare the results to our additive fit of HW1.
+
+```{r}
+HW3 <- HoltWinters(hw_train, seasonal = "multiplicative")
+HW3.pred <- predict(HW3, 26, prediction.interval = TRUE, level=0.95)
+plot(hw_train, ylab="candy production", xlim=c(1,11), ylim=c(2,8))
+lines(HW3$fitted[,1], lty=2, col="blue")
+lines(HW3.pred[,1], col="red")
+lines(HW3.pred[,2], lty=2, col="orange")
+lines(HW3.pred[,3], lty=2, col="orange")
+
+
+```
+
+As the plot suggests, the confidence intervals spread wildly outward. For this data set, multiplicative seasonality fitting does not appear to be the way to go.
+
+An alternative to the above forecasting and visualisation method is to use the *forecast* function and plot forecast values with multiple confidence intervals: 
+
+```{r}
+library(forecast)
+HW1_for <- forecast(HW1, h=26, level=c(80,95))
+#visualize our predictions:
+plot(HW1_for, xlim=c(1,11))
+lines(HW1_for$fitted, lty=2, col="purple")
+
+```
+<br/>
+
+After these explorations, we calculate the RMSE of predicted sales using HW1 approach as follows:
+
+<br/>
+
+```{r}
+rmse_HW <- (sum((as.numeric(HW1.pred[,1])-LSales[97:122])^2/26))^0.5
+
+rmse_HW
+```
+
+The model's RMSE is 0.623.
+
+We can also evaluate the quality of our predictions by compiling the observed values minus the predicted values for each data point. These are added to our forecast model as *residuals*. 
+
+To best evaluate the smoothing functions we used in our model, we want to check whether there are autocorrelations in the residuals. Simply put,if neighbouring points in our fits continually miss the observed values in a similar fashion, our main fit line is not reactive enough to the changes in the data. To capture this, we use the *acf* function. Ideally, for a non-zero lag, the ACF bars are within the blue range bars, as shown below. It is important to use na.action=na.pass because the last value of residuals is always NA, and the function will otherwise will give an error.
+
+
+```{r}
+acf(HW1_for$residuals, lag.max=20, na.action=na.pass)
+
+```
+
+
+The ACF plot of the residuals shows that there is no significant autocorrelation at any lag, except for lag 3. We could strengthen the model even further by including the third lag for the AR component. Alternatively, we can check the Lljung-Box test results to assess the overall autocorrelation in the residuals. If we obtain a p-value > 0.05, we can conclude that residuals are not autocorrelated with .95 probability. The following code runs the Lljung-Box test: 
+
+```{r}
+Box.test(HW1_for$residuals, lag=20, type="Ljung-Box")
+
+```
+
+Since the p-value of the test is higher than .05, we can infer that the residuals do not show a significant overall autocorrelation pattern. 
+
+Finally, it is useful to check the histogram of the residuals to ensure that they follow a normal distribution. If the residuals are heavily skewed, our model may be consistently overshooting in one direction.
+
+```{r}
+hist(HW1_for$residuals)
+```
+
+The histogram plot suggests that residuals are slightly skewed or follow a close-to-normal distribution. 
+
+
+After the model passes the diagnostics checks, we can generate the forecasts. 
+
+<br/>
+
+#### Sales forecast using Holt-Winters' method
+
+Using the Holt-Winters' method with the HW1 approach, we will generate sales forecasts for the next twelve months: 
+
+```{r}
+# Estimate the finalized HW model using the entire data set and generate 12 forecasts
+HW_final <- HoltWinters(ts(data$LSales, frequency=12))
+HW_final_forecast <- predict(HW_final, 12, prediction.interval = TRUE, level=0.95)
+
+# List the forecasted sales for the next 12 months
+HW_final_forecast[,2]
+
+```
+
+Note that these are the forecasts for the sales data in logarithm. Therefore, we need to convert the logged sales forecasts to sales forecasts in level. We do this by taking the exponentiation of the forecasts.See below. 
+
+```{r}
+
+# Note that we worked with the logged data. Therefore, we should take the exponentiation. 
+HW_final_forecast_sales <- exp(HW_final_forecast[,2])
+
+# If we add 1 to the raw data before we take the log, then we should run the following code instead. 
+# HW_final_forecast_sales <- exp(HW_final_forecast[,2])-1
+HW_final_forecast_sales
+```
+
+<br/>
+
+These are our final forecasts based on the Holt-Winters' method. Next, we will apply the simple exponential smoothing method. 
+
+<br/>
+
+### Simple exponential smoothing 
+
+We repeat the above tasks using the simple exponential smoothing (SES) method.
+
+First, we split our data again into training and test set.
+```{r}
+ses.train <- window(data$LSales, end = 96)
+ses.test <- window(data$LSales, start = 97)
+
+```
+
+<br/>
+
+#### Parameter tuning and estimation
+
+To find the best alpha, i.e., the smoothing parameter, we can ask R to take different values between 0.1 and 0.9 with a 0.01 step apart each time, estimate the SES model, and calculate the corresponding RMSE metric for each alpha. Then, we can plot all the RMSE values against values of alpha. Finally, we can choose the alpha parameter that yields the lowest RMSE. See below. 
+
+```{r  warning=FALSE}
+# Identify the optimal alpha parameter
+
+alpha <- seq(.1, .9, by = .01)
+RMSE <- NA
+for(i in seq_along(alpha)) {
+  fit <- ses(ses.train, alpha = alpha[i], h = 26)
+  RMSE[i] <- accuracy(fit, ses.test)[2,2]
+}
+
+# convert to a data frame and identify min alpha value
+alpha.fit <- data_frame(alpha, RMSE)
+alpha.min <- filter(alpha.fit, RMSE == min(RMSE))
+
+# plot RMSE vs. alpha
+ggplot(alpha.fit, aes(alpha, RMSE)) +
+  geom_line() +
+  geom_point(data = alpha.min, aes(alpha, RMSE), size = 2, color = "blue") 
+
+```
+
+<br/>
+
+The above plot shows that alpha should be 0.1. Thus, we will estimate the SES model using the training set and setting the *alpha* parameter to 0.1. See below.   
+
+```{r}
+# refit the optimal model with alpha = .1
+ses.opt <- ses(ses.train, alpha = .1, h = 26)
+
+# plotting results
+plot_ses <- autoplot(ses.opt) +
+  theme(legend.position = "bottom")
+plot_ses
+```
+<br/>
+
+Next, we will evaluate the sales forecast performance of the SES method. 
+
+<br/>
+
+#### Forecast performance evaluation using SES 
+
+To evaluate the forecast performance based on the SES method, we refer to the *accuracy()* function: 
+
+```{r}
+
+# performance evaluation
+accuracy(ses.opt, ses.test)
+
+```
+
+This output shows that RMSE in our test set is approximately 0.395. Also, RMSE for the training set is 0.344. The comparison of RMSE values from the tarining and test sets suggests that there is no overfitting issue. 
+
+<br/>
+
+#### Sales forecast using SES 
+
+Now we will produce the sales forecasts for the next twelve months. 
+
+```{r}
+
+# Estimate the SES model using the entire dataset and generate forecasts for the next 12 months
+ses_forecast <- ses(ts(data$LSales, frequency=12), alpha = .1, h = 12)
+
+# List the forecaster sales for the next year 
+ses_forecast$mean
+
+```
+
+
+Note that these are the forecasts for the sales data in logarithm. Therefore, we need to convert the logged sales forecasts to sales forecasts in level. We do this by taking the exponentiation of the forecasts.See below. 
+
+
+```{r}
+ses_forecast_sales <- exp(ses_forecast$mean)
+
+# If we add 1 to the raw data before we take the log, then we should run the following code instead. 
+# ses_forecast_sales <- exp(ses_forecast$mean)-1
+
+ses_forecast_sales
+```
+
+<br/>
+
+Finally, these are our sales forecasts based on the SES method. 
+
+<br/>
+
+### Model comparison
+
+Now we compare the forecast performance of these models. 
+
+```{r}
+table_rmse_summary<-data.frame(
+  Method=c("SARIMA", "SES", "Holt-Winters"), RMSE = c(0.387, 0.395, 0.624))
+
+table_rmse_summary
+```
+
+---
+
+**Question**: Which of these models should be picked by Silverline, and why? 
+
+---
+
+The RMSE values suggest that seasonal ARIMA model outperforms the other two models. Let us have a closer look at the seasonal ARIMA model forecasts:  
+
+
+```{r}
+
+table_forecast_summary<-data.frame(
+  Future_Month=c(1,2,3,4,5,6,7,8,9,10,11,12), Forecast_SARIMA = forecast_sales_arima_final)
+
+table_forecast_summary
+
+
+```
+
+
+---
+
+**Question**: How should Silverline move forward with these point forecasts? (Hint: prediction intervals)
+
+---
+
+All in all, using the seasonal ARIMA model's forecasts for this store, Silverline can try to predict the demand for the other store that struggles with the stockout problems. Undoubtedly, other sophisticated models that include further significant drivers of the store demand (e.g. price, promotion) would improve these forecasts.    
+

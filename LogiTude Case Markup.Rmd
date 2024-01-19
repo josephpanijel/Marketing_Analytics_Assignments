@@ -1,0 +1,377 @@
+---
+title: "Churn Prediction"
+subtitle: "Case Study: Logi.Tude"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+---
+<center>
+![](Pictures/churnprediction.png){width=900} 
+</center>
+---
+
+## Introduction
+
+Logi.Tude is a famous game developer from Finland founded in 2008, which offers a comprehensive online gaming platform with more than 15 million customers. The platform currently manages three major online real-time strategy games. Revenues are generated either through in-game purchases for avatars and mods or through a monthly subscription fee that may vary depending on which services and games a customer is using. 
+
+While Logi.Tude focused on platform development within the last five years by introducing new games and extending the current listings by introducing mods and unique games. The platform enjoyed substantial growth right after its launch. However, within the last 18 months, Logi.Tude saw more and more customers becoming inactive and canceling subscriptions.
+Re-activating these lost customers turns out to consume substantial resources and threatens Logi.Tude’s cash flow that is urgently needed to secure the development of future games. Therefore, the board of directors calls in an emergency meeting to discuss measures. Dobs Bavis, the freshly appointed CMO responsible for customer relations, has difficulty explaining the current developments and is facing harsh criticism. *“We cannot accept that we do not have a clear understanding of why customers are leaving us. Until we develop a better understanding and can take measures, we, however, expect marketing to identify customers who may potentially leave the platform and to address these customers with adequate retention measures,*” requests Logi.Tude founder and current CEO Charles Selenski.
+
+<br/>
+
+Right after the board meeting, Dobs contacts you as the head of the data science department and asks you to conduct a project that 
+
+* can predict which customers are likely to leave the company 
+
+* understands from the available CRM database which factors help best predict customer churn. 
+
+To achieve this, Dob provides you with the following data set from the CRM system. 
+
+<br/>
+
+```{r eval=TRUE, echo=FALSE}
+table_desc<-data.frame(
+CRM_Variable = c("customer_id", "churn", "monthly_bill","gender", "millennial", "clanmembership", "platformsince", "avatar", "internet_connect", "extrapro_account", "contract_length", "customer_support", "payment_type"),
+Description = c("unique identifier for each customer", "information if customer left company or stayed with service", "payment data from customer based on returns from subscription and in game purchases" ,"customer gender", "categorical information about age" ,"Information if customer is member of a gaming clan", "time since customer is active on platform","information if customer has bought customized avatar", "average speed of internet connection", "information if customer is subscribing to a pro gaming account with bonus experience", "type of subscription model", "Information if customer has been in contact with support within the last 6 months", "information on how customer pays invoices"),
+Measurement = c("unique numerical identifier", "Yes/No", "spending in €", "male/female", "Millennial or Gen Z", "Yes/No", "number of months", "Yes/No", "DSL, DSL16, Fiber", "Yes/No", "month-to-month, 1 year, 2 year", "Yes/No", "Pre-Paid, Electronic Check, Bank Transfer, Credit Card"), stringsAsFactors = FALSE)
+```
+
+
+```{r xtable, results="asis", echo=FALSE}
+#print(table_desc)
+library(xtable)
+tab<-xtable(table_desc, caption=c("Table 8.1: Logi.Tude's CRM Data"))
+print(tab, type="html")
+```
+
+
+We can now load the data in R with the read_csv command and then inspect the dataframe with the str() command. 
+
+```{r eval=TRUE, echo=TRUE}
+library(tidyverse)
+#Import Data
+LogiTude_CRM_Data <- read_csv("Data/LogiTude CRM Data.csv")
+str(LogiTude_CRM_Data)
+```
+
+Most of the variables were imported as characters, as R did not understand that these should be treated as factors so that we can easily include them in the analysis. We must thus re-code these variables.
+
+```{r eval=TRUE, echo=TRUE}
+
+LogiTude_CRM_Data$churn = as.factor(LogiTude_CRM_Data$churn)
+LogiTude_CRM_Data[sapply(LogiTude_CRM_Data, is.character)] <- lapply(LogiTude_CRM_Data[sapply(LogiTude_CRM_Data, is.character)], as.factor)
+str(LogiTude_CRM_Data)
+```
+
+To have an adequate training data set with sufficient variation and information, we use 80% of the data set for the training set and cut off 20% of the data for our test set. We can achieve this with the following command. As you can see in the first line, we use 0.8 as a cut value.
+
+```{r eval=TRUE, echo=TRUE}
+
+#Prepare DataFrame for Analysis
+Logi.Data = LogiTude_CRM_Data
+Logi.Data$X1 <- NULL
+Logi.Data$customer_id <- NULL
+
+#Split Data for HoldOut 
+
+sample_size = floor(0.8*nrow(Logi.Data))
+set.seed(777)
+
+# randomly split data in r
+picked = sample(seq_len(nrow(Logi.Data)),size = sample_size)
+train.LogiTude =Logi.Data[picked,]
+test.Logi.Tude =Logi.Data[-picked,]
+
+```
+
+## Logistic Regression Analysis
+
+With the following code we run our Logistic Regression model. As you can see instead of lm we rely on the glm function from R that calls a generalized linear model. We hand in the dependent variable that we seperate again with *~* from the independent variables. With the addition of *family "binomial"* we tell R that we want to execute a logistic regression with a binary dependent variable. The *summary* command finally provides us with the output.
+
+
+```{r eval=TRUE, echo=TRUE}
+
+LR.Logi.Tude = glm(churn ~  monthly_bill + gender + millenial + clanmembership + 
+                     platformsince + avatar + internet_connect + extrapro_account + 
+                     contract_length + customer_support + payment_type,
+                     data = train.LogiTude, family = "binomial")
+
+summary(LR.Logi.Tude)
+
+```
+
+Strongly correlated variables within the model may cause multicollinearity and thus lead to inflated estimates. To control for multicollinearity we need to activate the performance library and use the collinearity function.
+
+```{r eval=TRUE, echo=TRUE}
+
+library(performance)
+check_collinearity(LR.Logi.Tude)
+
+```
+
+As the output indicates, the two variables monthly_bill and internet_connect show high Variance Inflation Factors and thus point us on multicollinearity issues. Thus, we need to drop one of the two variables from the model.
+
+---
+
+**Question**: Which variable do you suggest to drop here? For which reason? 
+
+---
+
+We can now build our final logistic regression model and control for one last time, that multicollinearity is no issue. We use the following code.
+
+
+```{r eval=TRUE, echo=TRUE}
+LR.Logi.Tude1 = glm(churn ~  monthly_bill + gender + millenial + clanmembership + 
+                     platformsince + avatar + extrapro_account + 
+                     contract_length + customer_support + payment_type,
+                   data = train.LogiTude, family = "binomial")
+
+
+summary(LR.Logi.Tude1)
+check_collinearity(LR.Logi.Tude1)
+
+```
+
+As indicated by the VIF values, which are all well below three, we can outrule the presence of multicollinearity and thus starting with interpreting the model output.
+
+Looking at the p-values, we can conclude that all variables but three show significant effects and thus influence the likelihood that a customer is leaving the platform. Only gender and credit card, and pre-paid payments do not significantly affect the churning likelihood. 
+
+For our categorical variables, we see that one category is always missing. In the case of contract length, e.g., monthly payments are not listed. This is because R is treating the factors as dummy coded variables. One category is thus permanently excluded from the model. It serves as a reference category, which means that we can interpret the effects always in comparison to the missing reference category. In the case of contract length, we must thus conclude that longer contracts show a “lower” likelihood to churn, as indicated by the negative coefficients for the two categories, “One Year” and “Two Year” of our factor contract length.
+
+---
+
+**Question**: Go through all significant effects, interpret the direction of effect, and develop possible explanations for what you find. 
+
+---
+
+Given the functional form of the Logit model, we can not simply interpret the coefficients from the logistic regression but need to transform them into the odds that someone is churning, given a change of each variable. We can ask R to provide us with the Odds of each variable with this code.
+
+```{r eval=TRUE, echo=TRUE}
+exp(cbind(OR=coef(LR.Logi.Tude1), confint(LR.Logi.Tude1)))
+
+```
+
+The Odds  can now be interpreted as the corresponding likelihood of each variable for churning. 
+
+While the odds help us with understanding the impact of each variable on the churn likelihood we can not still make any predictions and are thus not able to judge the predictive power of our model. We must thus fit our model to the test data set and see how well we are able to predict churning customers. We achieve this with the following code that gives us the model's accuracy. 
+
+```{r eval=TRUE, echo=TRUE}
+fitted.results.LR1 <- predict(LR.Logi.Tude1,newdata=test.Logi.Tude,type='response')
+fitted.results.LR1 <- ifelse(fitted.results.LR1 > 0.5,1,0)
+fitted.results.LR1 <- ifelse(fitted.results.LR1 == 1,"Yes","No")
+fitted.results.LR1 <- as.factor(fitted.results.LR1)
+misClasificError <- mean(fitted.results.LR1 != test.Logi.Tude$churn)
+print(paste('Logistic Regression Accuracy',1-misClasificError))
+```
+
+We can thus conclude that our model correctly predicts customer churn in 80.99% of all cases. 
+
+## Decision Tree Model
+
+To grow a decision tree we need to again load two more libraries: rpart and rpart.plot. We do this with the following command. 
+
+```{r eval=TRUE, echo=TRUE}
+library(rpart)
+library(rpart.plot)
+```
+
+To grow a tree we can simply use the following command, which resembles a lot the common regression commnands we know from the OLS and GLM models.
+
+```{r eval=TRUE, echo=TRUE}
+my_1sttree.LogiTude <- rpart(churn ~
+                               monthly_bill + gender + millenial + clanmembership + 
+                               platformsince + avatar + internet_connect + extrapro_account + 
+                               contract_length + customer_support + payment_type, data = train.LogiTude,
+                             method = "class", cp = 0.001, minsplit = 400, maxdepth = 5)
+```
+
+We tell R with the help of the rpart function that we want to estimate a decision tree model. We then hand in the depenendet variables churn, which we again seperate from the independent variables (features) with the *~*. Finally we specify the dataframe with the dataset and tell R that we want to apply a classification model with a binary outcome variable by handing in the specification *method = "class"*. The remaining information is related to how deep and detailled we want out tree to grow. We will come back to the meaning of these later. 
+
+To inspect our tree we use the rpart.plot function from the corresponding library.
+
+```{r eval=TRUE, echo=TRUE}
+rpart.plot(my_1sttree.LogiTude)
+```
+
+We start our inspection at the root, where contract length is the first variable for a split. The tree shows that if you have a one- or two-year contract, you are immediately moved to the non-churning leave that takes 45% of the sample and in which only 7% of the members churned on the bottom left. You are moved to the right leave if you have a monthly contract that incorporates 55% of the sample.
+
+Here another variable is now used for the split: the type of internet connection. If you have fiber, the tree sends you to the left leave, which consists of 25% of the sample; in case you have base DSL or DSL16, you are sent to the right leave, which consists of 30% of the sample. 
+
+Here platform age is used for another split. If you are longer than 16 weeks with the platform, you are assigned to the bottom leave consisting of 15% of the sample, which indicates that you are a churner. We must thus assume for every user who is more than 16 weeks with the platform, using a mid or slow DSL connection, and having a monthly payment plan, that this person is likely to churn and needs our attention. Checking the other bottom leaves, we can develop similar rules. 
+
+Check, e.g., the green leave with churners in the middle of the bottom row that incorporates 4% of the sample. Going up from here, we can similarly conclude that all people who pay each month more than 50 €, who use a base DSL connection, and are longer than five weeks with the platform while having a monthly subscription plan, are also likely to churn. You may by now understand why decision trees are popular with managers. They are easy to understand, can be nicely visualized, and lead to actionable rules and insights.
+
+
+#### Accuracy of Tree Model
+
+To finally assess the accuracy of the model and compare it to the Logistic Regression, we once again predict the churn column in the test data set. Don't let the code confuse you too much. While we use again the <span style="color: red;">predict()</span> function for the churn predictions, we need to change the prediction output from the prediction likelihoods to Yes and No votes, which then resemble the data in our train data set. So we can finally count how many times we correctly predicted the outcome of the variables and then use this information to calculate the tree's accuracy. 
+
+
+```{r eval=TRUE, echo=TRUE}
+fitted.results.Tree1 <- predict(my_1sttree.LogiTude, test.Logi.Tude)
+fitted.results.Tree1.bin = as.factor(ifelse(fitted.results.Tree1[,1]>0.5, "No", "Yes"))
+
+p1 <- predict(my_1sttree.LogiTude, train.LogiTude)
+p1.bin <- as.factor(ifelse(p1[,1]>0.5, "No", "Yes"))
+
+table1 <- table(Predicted = p1.bin, Actual = train.LogiTude$churn)
+table2 <- table(Predicted = fitted.results.Tree1.bin, Actual = test.Logi.Tude$churn)
+
+print(paste('Decision Tree Accuracy',sum(diag(table2))/sum(table2)))
+
+```
+
+As you can see, the churn prediction accuracy is 80.57% and thus slightly under the accuracy of the logistic regression model. 
+
+---
+
+**Question**: Why do you believe the decision tree model’s accuracy to be slightly below the accuracy of the logistic regression? What key differences between the two models can you identify?
+
+---
+
+### Tuning the Tree
+
+So far we only estimated the tree model by specifying the features we include in the tree. But we did not yet touch the key input metrics for how we generate the tree: cp, minsplit, and maxdepth.
+
+CP stands for complexity parameter. The CP parameter is used in the context of cost-complexity pruning. After building a decision tree, pruning involves removing some of the branches to avoid overfitting. The CP parameter controls the trade-off between the complexity of the tree and its goodness of fit to the training data. A smaller CP value allows for more aggressive pruning, leading to simpler trees. A larger CP value allows the tree to be more complex. In the rpart package in R, the cp parameter controls the minimum improvement in the model's accuracy required for a split to occur. Lower values of cp lead to deeper trees, while higher values result in shallower trees.
+
+minsplit: In decision tree algorithms, minsplit is a user-defined parameter that sets the minimum number of observations (data points) required in a node for a further split to be attempted. If the number of observations in a node falls below this threshold, the algorithm will stop splitting at that node. A smaller minsplit value allows the tree to be more complex, potentially leading to deeper trees with more splits. On the other hand, a larger minsplit value results in a simpler tree with fewer splits. In summary, the minsplit parameter controls the minimum number of observations required for a node to be eligible for further splitting in a decision tree. It is an important parameter in preventing overfitting and influencing the complexity of the resulting tree structure.
+
+maxdepth is the parameter that is related to the maximum depth or height of the tree. The depth of a tree is the length of the longest path from the root to a leaf. Smaller maxdepth value leads to a shallower tree with fewer splits and a simpler structure. On the other hand, a larger maxdepth value allows the tree to be more complex, potentially leading to deeper trees with more splits. Setting an appropriate maxdepth value is crucial for preventing overfitting. If the maxdepth is too large, the tree may capture noise and details specific to the training data, leading to poor generalization to new data. A smaller maxdepth encourages the tree to be more general and avoid overfitting.
+
+So how do we identify the best combination of these parameters? The answer is simple: We try out all combinations and see which one leads to the best accuracy. This procedure is often referred to as grid search. The grid is something like a net we throw into the sea of data to see at which point we catch the most fishes. Each point in the net is a composition of values. 
+
+To build this grid (or net) we initally determine a df (here we call it tuneGrid) that contains all values we want to be included in the gridseach. To make things simple, quick and easy, we try out only a limited number of values (see below). If you want to explore a larger net, feel free to add more values to the three variables in the tuneGrid dataframe. You can also make the meshes in the net tighter, by reducing the distance between the values, while adding more values. For now, let us see what is happening when we specifiy the following grid. 
+
+
+```{r eval=TRUE, echo=TRUE}
+# Define the tuning grid
+tuneGrid <- expand.grid(
+  minsplit = c(400, 500, 600),       # Set your desired values for minsplit
+  maxdepth = c(5, 10, 15),            # Set your desired values for maxdepth
+  cp = c(0.001, 0.01, 0.1, 0.2)       # Set your desired values for cp
+)
+```
+
+We can now build a loop that tries out each possible combination of the values specified in our grid to store the resulting accuracy values. At the end below`s code gives us the best combination.
+
+```{r eval = TRUE, echo=TRUE}
+# Create an empty list to store results
+results_list <- list()
+
+# Iterate over the tuning grid
+for (i in 1:nrow(tuneGrid)) {
+  current_min_split <- tuneGrid$minsplit[i]
+  current_max_depth <- tuneGrid$maxdepth[i]
+  current_cp <- tuneGrid$cp[i]
+
+  # Train the model with current minsplit, maxdepth, and cp
+  model <- rpart(
+    churn ~ monthly_bill + gender + millenial + clanmembership + 
+      platformsince + avatar + internet_connect + extrapro_account + 
+      contract_length + customer_support + payment_type,
+    data = train.LogiTude,
+    method = "class",
+    cp = current_cp,
+    minsplit = current_min_split,
+    maxdepth = current_max_depth
+  )
+
+  # Predict class probabilities
+  predicted_probs <- predict(model, newdata = train.LogiTude, type = "class")
+
+  # Evaluate model accuracy
+  accuracy <- sum(predicted_probs == train.LogiTude$churn) / nrow(train.LogiTude)
+
+  # Store results
+  results_list[[i]] <- c("MinSplit" = current_min_split, "MaxDepth" = current_max_depth, "CP" = current_cp, "Accuracy" = accuracy)
+}
+
+# Convert the results to a data frame
+results_df <- do.call(rbind, results_list)
+
+# Identify the row with the maximum accuracy
+best_row <- results_df[which.max(results_df[, "Accuracy"]), ]
+
+# Print the best combination
+print("Best Combination:")
+print(best_row)
+```
+
+Now we can use these values to specify the optimized model and to give us the corresponding plot.
+
+```{r eval=TRUE, echo=TRUE}
+# Extract the best hyperparameter values
+bestMinSplit <- best_row[["MinSplit"]]
+bestMaxDepth <- best_row[["MaxDepth"]]
+bestCP <- best_row[["CP"]]
+
+# Train the final model with the best parameters
+final_model <- rpart(
+  churn ~ monthly_bill + gender + millenial + clanmembership + 
+    platformsince + avatar + internet_connect + extrapro_account + 
+    contract_length + customer_support + payment_type,
+  data = train.LogiTude,
+  method = "class",
+  cp = bestCP,
+  minsplit = bestMinSplit,
+  maxdepth = bestMaxDepth
+)
+
+# Plot the resulting tree
+rpart.plot(final_model, type = 2, extra = 1)
+```
+
+### Random Forrest
+
+To see if we can further improve our single decision tree model, we now try a popular bagging extension of decision tree models: Random Forrest. We use  randomly sampled subsets to build different tree models, which we then combine to  create a forest from the different trees. 
+
+For Random Forrests we again rely on another package that has been especially developed for random forrest applications. 
+
+```{r eval=TRUE, echo=TRUE}
+library(randomForest)
+set.seed(111)
+```
+
+The command for the random forrest remains very similar to the previous commands. We first specify the depedent variable and seperate this variable from the independent variables with the ~ symbol. In addition we can specify how many random subsamples we want to create, i.e. how many different trees we want to plant into or forrest. Don't worry if the estimation takes a bit more time, given that we ask our computer to estimate 5000 different models, some patience is ceretainly in place!
+
+
+```{r eval=TRUE, echo=TRUE}
+my_1stforest.LogiTude <- randomForest(churn ~
+                                        monthly_bill + gender + millenial + clanmembership + 
+                                        platformsince + avatar + internet_connect + extrapro_account + 
+                                        contract_length + customer_support + payment_type,
+                          data = train.LogiTude, importance = TRUE, ntree = 5000)
+```
+
+To compare the model’s accuracy with the single tree model and the logistic regression, we can further calculate the accuracy with the help of the test set and the following code.
+
+```{r eval=TRUE, echo=TRUE}
+forest.prediction <- predict(my_1stforest.LogiTude, test.Logi.Tude)
+misClasificError.RF <- mean(forest.prediction != test.Logi.Tude$churn)
+
+print(paste('Logistic Regression Accuracy',1-misClasificError.RF))
+```
+
+So we see that the Random Forrest indeed delivered the highest accuracy with a value of *87.12%*
+
+While the logistic regression allowed us to use the odd ratios, and the decision tree allowed us to examine the different branches, to gain an understanding of which factors increase churning likelihoods, the random forest package provides us with the feature importance scores to determine the features which have the strongest impact on churn. 
+
+```{r eval=TRUE, echo=TRUE}
+varImpPlot(my_1stforest.LogiTude)
+```
+
+The accuracy plot shows how much worse the model would perform without the included variables. Thus, a large decrease (= high value on the x-axis) is associated with a variable of high estimation power. The second plot is the Gini coefficient. The higher the variable values here, the more important the variables are for the model.
+
+
+---
+
+**Question**: Which variables do have the strongest impact on churn? What can Logi.Tude learn from that and possibly improve?
+
+---
+
+
