@@ -1,0 +1,387 @@
+---
+<center>
+![](Pictures/ESSECDSBASession2.jpg){width=800}
+</center>
+---
+
+## "Case Study: Stratton AE Banking"
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+---
+<center>
+![](Pictures/StrattonLogoLong.png){width=600}
+</center>
+---
+
+## Introduction
+
+Stratton AE-Banking is a newly founded online bank in the US market. The E-banking service is a joint venture of a young fintech start-up and the long-time standing New York Stratton & Fils private banking house. The joint venture was founded in 2020 and has since then enjoyed great interest by providing digital private banking services. It profits from an AI driven recommender engine that uses past investment information together with a market and finance machine learning engine to derive investment tips and portfolio suggestions for its customers. So far, the fintech startup was well able to successfully approach young investors and customers. After the joint venture with Stratton & Fils, the fintech hopes to also attract existing customers from the established bank. 
+
+
+However, the conservative bank management of Stratton & Fils is extremely worried about simply approaching all of its customers, as it fears that the data driven and digital customer experience of Stratton AE may disturb some of its long-standing customers and may harm the longtime established and very intimate customer relations, which are believed to be an essential success factor in the bank’s success history. 
+
+
+The management thus approaches you as the head of the data science team and asks you to conduct a segmentation analysis of the bank’s existing customer base and to identify suitable customer segments, which might be open to try out Stratton & Fils joint venture. 
+As a base for your segmentation analysis, the CRM manager provides you with the following data. 
+
+#description of the csv (all variables)
+```{r eval=TRUE, echo=FALSE}
+library(readr)
+table_desc <- read_csv("Data/tabledesc.csv")
+```
+
+
+```{r xtable, results="asis", echo=FALSE}
+#print(table_desc) in html format
+library(xtable)
+tab<-xtable(table_desc, caption=c("Table 8.1: Logi.Tude's CRM Data"))
+print(tab, type="html")
+```
+
+
+We can now load the data in R with the read_csv command and then inspect the dataframe with the str() command. 
+
+```{r eval=TRUE, echo=TRUE}
+library(tidyverse)
+#Import Data
+BankinCRMData <- read_csv("Data/StrattonAEBankingCRM.csv")
+#get summary stats for all variables
+summary(BankinCRMData)
+```
+
+### Distance as a measure of similarity
+
+To identify segments of similar customers, let us first focus on the question how to measure similarity. Table 2 shows us some observations for customers from another banking database. The columns show the values of some customer related attributes. We can use the individual attribute characteristics to now calculate a so called distance measure, which shows how similar or dissimilar customers are. The higher the distance, the more dissimilar they are. For continuous variables, we can use the basic Euclidean Distance measure to derive similarities. The Euclidean Distance between two customers A and B can be expressed by the following equation.
+
+$$ED_{A,B}= \sqrt{(f_{1,A}-f_{1,B})^{2}+(f_{2,A}-f_{2,B})^{2}+...+(f_{n,A}-f_{n,B})^{2}} $$
+
+
+
+```{r eval=TRUE, echo=FALSE}
+Table2_1 = read_csv("Data/mashcustomer.csv")
+```
+
+```{r eval=TRUE, echo=TRUE}
+Table2_1 #read the table in good format
+```
+
+We can now use the formula of the Euclidean Distance to calculate for example the distance between Hawkeye and Potter. 
+
+```{r eval=TRUE, echo=TRUE}
+ED_Hawkeye_Potter = sqrt((32-64)^2 + (45-75)^2+ (25-10)^2 + (1-3)^2) 
+ED_Hawkeye_Potter
+```
+
+
+---
+
+**Question**: Repeat the calculations for Hawkeye and Burns as well as Hawkeye and Hotlips.
+
+---
+
+
+While this is a great exercise, it will be impossible to calculate the distances amongst all members of a large customer data base with e.g. 200,000 entries. However in this case we can also use R's function for Euclidean Distances. We simply need to give the function a data frame with all observations we would like to compare, and R will return a table with the corresponding distances. 
+
+```{r eval=TRUE, echo=TRUE}
+library(philentropy) #all columns except the name, calculate distance among all members
+#we use the distance to measure the similarity between observations, and we will be able to build clusters, make predictions based on that)
+distance(Table2_1[,2:5], method = "euclidean")
+```
+
+
+### k-mean as a solution to form homogenous subgroups
+
+While the distances help us with understanding similarities and dissimilarities they do not yet help us with forming subgroups, ad only from the distances, you do not know which threshold determines similarity/dissimilarity. Hawkeye may be closest to Burns, but is 18 still a great distance? Or actually already pretty similar? Who should be paired with whom?
+
+
+This implies that grouping consumers in homogenous subgroups requires a lot of attention and balance and some more information than just similarity measures. In addition, we realized with our 5 customers, that grouping takes us some time and effort and will certainly prevent us from forming larger groups or segmenting larger data sets with hundreds of thousands of customers. 
+Therefore, it is time to discover a method that uses intersubject distances to automatically form groups. Such methods are commonly referred to as cluster analysis. Cluster analysis are a well-known and established statistical method, that is used for the last 30-40 years in marketing research. With the advent of machine learning and artificial intelligence applications, cluster analysis became again popular in data science, where it is often referred to as an unsupervised learning algorithm. 
+
+
+k-mean cluster analysis uses distances to form clusters within data. Once the user determined the k number of clusters the algorithm should define, the cluster randomly assigns k starting points within the data (Step1). It continues then to calculate the distance of each observation in the data to each starting point. As pointed out in in below's Figure the algorithm then assigns each observation according to the distance to the closest starting point (Step2). This leads to an initial cluster solution. For each of these clusters the algorithm then calculates the new center point of the cluster, called centroid (Step3). The centroid can be interpreted as the mean of all observations within this cluster. Step4 now repeats the procedure of step2. The new centroids are used to again calculate all distances between all observations and all centroids. Then again, the observations are assigned to the closest centroid. This may lead to changes in cluster membership and lead to new forms of clusters. In the subsequent step, the algorithm continues to calculate the resulting new centroids (Step5), to then re-calculate the distances and re-assigning observations to clusters.  The algorithm stops once no observation can be re-assigned to another cluster or after a to be specified number of iterations. 
+
+![](Pictures/kmeanviz.png)
+
+One thing we may mind before running a cluster analysis, is scale heterogeneity. Especially k-mean clustering is sensitive to data that comes at different scale levels. Having variables at very different levels, thus creates problems, which may ultimately lead to biased results. A quick fix is to standardize the variables so that they all share a similar range. This procedure is commonly referred to as standardization.
+
+R can standardize all variables for us with the help of the scale() function. When we now inspect the resulting new data frame scaled.crm with the head() function. 
+
+```{r eval=TRUE, echo=TRUE}
+scaled.crm = scale(BankinCRMData) #scale means standardizing the data
+head(scaled.crm) #display first 5
+```
+
+As you see, all variables now range in similar areas. We can thus proceed with our analysis
+
+We can now start with the cluster analysis. Let us first try out different solutions with different numbers of clusters. To ensure that we start with the same centroids, we use the set.seed function. This ensures that every time we run this code, we end up with the same results. If you do not use set.seed ahead of the cluster analysis, you will receive different solutions, which will be close to each other but not identical. We can run a k-mean cluster analysis with R’s kmean function. We tell the kmean function simply which data.frame contains our customer data and specify the k number of clusters we want to be included. Here we set k to 4. 
+
+To see how many customers are assigned to each cluster, we furthermore plot the cluster sizes with the help of ggplot and a simple barplot. 
+
+
+```{r eval=TRUE, echo=TRUE}
+library(ggplot2)
+set.seed(123) #use random nb 1 2 3 as starting point (no meaningful impact, just to have always same exact outcome)
+StrattonCluster_6k <- kmeans(scaled.crm, 6) #4 as in 4 clusters
+StrattonCluster_6k[["size"]] #size of each cluster
+sizes6k <- data.frame(Size = StrattonCluster_6k[["size"]], 
+                    Cluster = c("Cluster1", "Cluster2", "Cluster3", "Cluster4", "Cluster5", "Cluster6"))
+
+ggplot(sizes6k, aes(x=factor(Cluster), y=Size)) + 
+  geom_col(fill=hcl(195, 100, 65)) + 
+  xlab("Cluster") + ylab("Size") + geom_text(aes(label=Size), vjust=0) + 
+  ggtitle("Cluster sizes k-means 6-cluster solution")
+```
+
+We can now inspect the different clusters and check their mean values. We achieve this with the following code, that first matches the estimated cluster to each observation in our data frame. Subsequently, we use dyplr’s group_by command to calculate the mean of each variable per cluster. You can then inspect the resulting data frame. You will see that some of the clusters show substantially different mean values for specific variables, while in other cases the means do not vary across the clusters.
+
+```{r eval=TRUE, echo=TRUE}
+#Build Cluster Specific Means for all Variables
+BankinCRMData$k4Cluster = StrattonCluster_4k[["cluster"]]
+
+summarystats.percluster_4k = BankinCRMData %>% group_by(k4Cluster) %>% 
+  summarise_if(is.numeric, mean, na.rm = TRUE)
+
+head(summarystats.percluster_4k)
+```
+
+Another approach to assess the quality of our segmentation, is to plot the different clusters. A key challenge here is dimensionality. Given that our clusters depend on a multitude of variables, we cannot plot them all together. To come to a solution that we can plot, we need to reduce the dimensions to two main factors, which then allows us to plot the points in two-dimensional space. A common technique to achieve this is a principal component analysis (PCA) that reduces all variables to two main factors, which we can subsequently plot. The plot will then allow us to better see if clusters overlap or if we end up with a meaningful separation between the different identified clusters. R’s factoextra package offers various functions, which achieve this with a single command that does not require us to code the PCA nor the plot. 
+
+
+```{r eval=TRUE, echo=TRUE}
+#Plot Clusters for 4k solution
+library(factoextra)
+fviz_cluster(StrattonCluster_4k, scaled.crm, ellipse.type = "norm")
+```
+
+
+A quick inspection of the plot already reveals that our 4k cluster approach is not optimal, as we see some more separable groups of close to each other observations. Especially in case of Clusters 3 and 4 (the larger ones) it looks like we can still split these groups into two more subgroups each. 
+
+
+
+---
+
+**Question**: Repeat the cluster analysis with k = 5 and k = 6
+
+---
+
+### How to determine the right number of clusters
+
+Trying out different solutions may point you onto something, still you will realize that determining the right number of clusters can be tricky. 
+
+To find the "best" number of cluster, there are different approaches and measures available. Before we discuss these, let us first reflect again on what we want to achieve with a cluster analysis. 
+
+We want to obtain subgroups that are homogenous within. So, to say we try to maximize within-group homogeneity, which means we try to reduce the level of variance between members of a cluster. The overall level of within-cluster-variances across all identified clusters can thus be used to describe the total degree of homogeneity obtained with a specific cluster solution. This gives us a chance to compare different cluster analyses with different numbers of clusters, as we can try to minimize the overall variances. 
+
+
+Using the within-cluster-variance values, we can determine which solution works best and then focus on this cluster analysis. To do so, we first estimate n cluster solutions with cluster numbers from 1 to k. Subsequently, we can then plot the within-cluster variance sums for each cluster solution. 
+
+Again R can do this for us with some short lines of code. Below you find two measures for within-cluster variances. We can now ask R to estimate kmean models with k values from 2 to 15 and to then plot the within variances of each solution. Don't worry, if this takes some time.
+
+
+```{r eval=TRUE, echo=TRUE}
+#Obtain Elbow anf Silhouette and Plots to determine optimal k 
+
+factoextra::fviz_nbclust(na.omit(scaled.crm), kmeans, method = "wss", k.max = 15)
+factoextra::fviz_nbclust(na.omit(scaled.crm), kmeans, method = "silhouette", k.max = 15) #silouhette shows that it's 8 clusters, while wss show its more 4 or 6
+
+#Qestions to ask urself :
+#use these measures to narrow down the case (often don't show the same amount), see which variables differentiate the clusters, and do these differences help me answer my business problem, which is more reflecting the real world (can we merge 2 clusters) 
+```
+
+The Elbow plot (1st plot), shows the total within sum of cluster variances for all estimated 15 solutions. The rule of thumb states, that the optimal cluster number lays within the “elbow” of the plot. This seems to be here rather tricky. As the function drops immediately and shows very low summed variances for clusters 2 to 15. Therefore, we rely on a second method, the Silhouette plot. The silhouette coefficient measures of how close an object is to its own cluster centroid, compared to the one of other clusters. The coefficient ranges from −1 to +1. High values indicate strong separation. Low values indicate poor separation. We thus want to select the cluster solution with the highest silhouette coefficient. In our case, the plot suggests 8 clusters. Looking again at the Elbow plot on the left, 8 seems rather high, especially as the “Elbow” – lays somewhere between 5 and 7. The silhouette plot suggests that the 7-cluster solution is inferior to the 6- and 8-cluster solutions. We may thus enrich our insights by plotting all three solutions with the following command. 
+
+```{r eval=TRUE, echo=TRUE}
+#Plot Cluster Solutions
+#k6
+StrattonCluster_5k <- kmeans(scaled.crm, 5)
+fviz_cluster(StrattonCluster_5k, scaled.crm, ellipse.type = "norm")
+#k7
+StrattonCluster_7k <- kmeans(scaled.crm, 7)
+fviz_cluster(StrattonCluster_7k, scaled.crm, ellipse.type = "norm")
+#k8
+StrattonCluster_8k <- kmeans(scaled.crm, 8)
+fviz_cluster(StrattonCluster_8k, scaled.crm, ellipse.type = "norm")
+```
+
+### Interpretation of Output
+
+Let us first start by looking in more detail at our 8-cluster k-mean model and see how big each cluster is, with the following code.
+
+```{r eval=TRUE, echo=TRUE}
+# 8 cluster k-mean cluster size plot
+
+sizes8k <- data.frame(Size = StrattonCluster_8k[["size"]], 
+                      Cluster = c("Cluster1", "Cluster2", "Cluster3", "Cluster4",
+                                  "Cluster5", "Cluster6", "Cluster7", "Cluster8"))
+
+ggplot(sizes8k, aes(x=factor(Cluster), y=Size)) + 
+  geom_col(fill=hcl(195, 100, 65)) + 
+  xlab("Cluster") + ylab("Size") + geom_text(aes(label=Size), vjust=0) + 
+  ggtitle("Cluster sizes k-means 8-cluster solution")
+```
+
+
+To gain deeper insights related to spending behavior as well as the digital affinity of the different segments, we want to plot the means of the different variables. To achieve this we first again assemble a descriptive data set with all variable means per cluster with the help of dplyr’s group_by function.
+
+
+```{r eval=TRUE, echo=TRUE}
+# Build Mean per Cluster DataFrame
+BankinCRMData$k8Cluster = StrattonCluster_8k[["cluster"]] #adding a new column to the original df Bankin CRM Data to classify each observation by its cluster
+
+summarystats.percluster_8k = BankinCRMData %>% group_by(k8Cluster) %>% 
+  summarise_if(is.numeric, mean, na.rm = TRUE) #grouping by clusters and getting summary data for each variables and remove NAs from it
+```
+
+
+We can now generate barplots of the different variables of interest and see if we find promising segments of Stratton & Fils customers, who might be open and suitable for Stratton AE Banking. Let us first focus on spending behavior, as indicated by the service fee variable. Note, that we adapted some of the commands in ggplot. By leaving geom_col() blank we do not specify a color and the plot remains in grey. In addition, we ask ggplot in geom_text to add labels with the two-digit rounded values of ServiceFees in white color and in font size 2.  With the position_stack command we put the values in the middle of the barplot.
+
+
+```{r eval=TRUE, echo=TRUE}
+#Barplot of Service Fees 
+
+ggplot(summarystats.percluster_8k, aes(x=factor(k8Cluster), y=ServiceFees)) + 
+  geom_col() + 
+  xlab("Clusters") + ylab("Spending") + 
+  geom_text(aes(label = round(ServiceFees, digits = 2)),
+               size = 2, colour = "white", 
+               position = position_stack(vjust = 0.5)) +
+  ggtitle("Average Spending in Service Fees per Cluster")
+```
+
+
+A visual inspection indicates that clusters 4 and 6 show the highest spending behavior, with clusters 8 and 2 following, while the remaining clusters show rather low service fee spendings. This makes at least the four high spending segments attractive for AE Banking. However, to be sure that the rather novel and highly digital app service appeals to these segments, we need to understand how digitally active and interested these segments are. 
+
+
+Let us first focus on the latest developments in fintech such as Bitcoin and NFT investments. We can again compare the segment-specific means for both variables. This time we want to combine the plots of Bitcoins and NFTs in one plot. We can arrange this with ggplot’s facet_wrap function that allows us to combine plots of different variables. The only “complication” we need to address is that we need to re-arrange the data set we want to plot. We can again use dplyr for this. We first select the variables of interest (cluster, NFTs and Bitcoins) and then transpose the data frame from a wide to a narrow format. We can then use again ggplot. This time we use the geom_bar command instead of the geom_col command. Facet_wrap will now tell ggplot to make two plots and combine them under each other (col =1). By setting scales to “free_y” we allow different y-axis levels, given that scales substantially vary across the two different variables. 
+
+
+```{r eval=TRUE, echo=TRUE}
+#Barplots of Fintech Investments
+
+FinTech <- summarystats.percluster_8k %>% select(k8Cluster, NFTs, Bitcoins) %>%
+  gather(key = "variable", value = "value", -k8Cluster)
+
+ggplot(FinTech, aes(factor(k8Cluster), value))+
+  geom_bar(stat='identity') + xlab("Clusters") +
+  facet_wrap(~variable,  ncol=1, scales = "free_y") +  
+  geom_text(aes(label = round(value, digits = 1)), size = 2, colour = "white", 
+            position = position_stack(vjust = 0.5)) +
+  ggtitle("FinTech Cluster Means")
+```
+
+
+From the inspection, we can see that clusters 4 and 6 show both most activity in NFTs acquisitions and are also most invested in Bitcoins, which makes them even more suitable for AE Banking. Let us now look at digital activities and compare digital and offline activities. 
+With the following code we can inspect the means for BranchVisits, AppLogins, ATMVisits, TimeOnlineBanking, SocialMediaInter, InternetTrafficVolume. As you can see from facet_wrap we now include two columns. 
+
+
+```{r eval=TRUE, echo=TRUE}
+#Plots for Digital vs. Offline Life
+
+DigLife = summarystats.percluster_8k %>% 
+  select(k8Cluster, BranchVisits, AppLogins, 
+   ATMVisits, TimeOnlineBanking, SocialMediaInter, 
+    InternetTrafficVolume) %>%
+gather(key = "variable", value = "value", -k8Cluster)
+
+ggplot(DigLife, aes(factor(k8Cluster), value))+
+  geom_bar(stat='identity') + xlab("Clusters") +
+  facet_wrap(~variable,  ncol=2, scales = "free_y") +  
+  geom_text(aes(label = round(value, digits = 1)), size = 2, colour = "white", 
+            position = position_stack(vjust = 0.5)) +
+  ggtitle("Digital Life vs. Offline Life Cluster Means")
+```
+
+
+The plot further confirms the strong digital affinity of clusters 4 and 6. Both show the lowest number of branch and ATM visits, while showing strong activity in online baking, internet traffic, social media interest, and banking app logins. 
+While we can now be sure that customers from segments 4 and 6 are highly digital affine and are thus likely to be interested in AE Banking, we should in the next step control the financial situation of these customers. Let us first focus on average age, income and household sizes.
+
+
+```{r eval=TRUE, echo=TRUE}
+#Plots for Socio Economic Factors 
+
+SocioEcon <- summarystats.percluster_8k %>% 
+  select(k8Cluster, Age, Income, HouseholdSize) %>%
+  gather(key = "variable", value = "value", -k8Cluster)
+
+ggplot(SocioEcon, aes(factor(k8Cluster), value))+
+  geom_bar(stat='identity') + xlab("Clusters") +
+  facet_wrap(~variable,  ncol=1, scales = "free_y") +  
+  geom_text(aes(label = round(value, digits = 1)), size = 2, colour = "white", 
+            position = position_stack(vjust = 0.5)) +
+  ggtitle("Socio-Economic Cluster Means")
+```
+
+
+The plots revealthe problems with socio-economic clustering, as the results for age and household size do not vary too much across the 8 clusters. We see some variation for income, where clusters 4 and 6 remain close to the total mean of the dataset, indicating, that the digital affine users, we identified, are neither poor nor rich, making them still a suitable target group. Age-wise, we similarly see that both segments are well-established adults in their end 30s or early 40s. Given that the socio-economic information indicates that the digital affine users profit from stable incomes, we should in the next steps focus on spending and investment behavior to understand, whether these segments allow sufficient business volume and growth potential. 
+
+
+```{r eval=TRUE, echo=TRUE}
+#Plots for Spending and Investments
+
+Invest <- summarystats.percluster_8k %>% 
+  select(k8Cluster, MortageVolume, StockVolume, NASDAQInvest, USAXSFundInvest) %>%
+  gather(key = "variable", value = "value", -k8Cluster)
+
+ggplot(Invest, aes(factor(k8Cluster), value))+
+  geom_bar(stat='identity') + xlab("Clusters") +
+  facet_wrap(~variable,  ncol=2, scales = "free_y") +  
+  geom_text(aes(label = round(value, digits = 1)), size = 2, colour = "white", 
+            position = position_stack(vjust = 0.5)) +
+  ggtitle("Investment Cluster Means")
+
+Spending <- summarystats.percluster_8k %>% 
+  select(k8Cluster, AccountSpending, CreditCardSpending, GrocerySpending) %>%
+  gather(key = "variable", value = "value", -k8Cluster)
+
+ggplot(Spending, aes(factor(k8Cluster), value))+
+  geom_bar(stat='identity') + xlab("Clusters") +
+  facet_wrap(~variable,  ncol=1, scales = "free_y") +  
+  geom_text(aes(label = round(value, digits = 1)), size = 2, colour = "white", 
+            position = position_stack(vjust = 0.5)) +
+  ggtitle("Spending Cluster Means")
+```
+
+From the inspection of the two plots, it becomes evident that clusters 4 and 6 are more invested in stocks than their counterparts, and compared to the other clusters also share lower levels of mortgages. Looking at the types of investments, we see that cluster 4 is more invested in NASDAQ listed companies than all other clusters, while cluster 6 is strongly invested in Stratton’s fund for small and mid-size US companies. Spending behavior information tells us that both segments belong to the less spending customers, with cluster 4 showing the lowest credit card turnover of all clusters. In case of grocery expenditures, we see cluster 6 being the cluster with the second-highest average spending behavior.  
+Last, we can enrich our insights, by looking at the living conditions of the different segments and see where the different segments are located. To achieve this, we finally compare residential information.
+
+
+```{r eval=TRUE, echo=TRUE}
+#Plots Residential Information
+
+Life <- summarystats.percluster_8k %>% 
+  select(k8Cluster, CityAreaSize, MeanCitySqFtPrice, MeanCityHouseHoldSize, MeanCityIncome) %>%
+  gather(key = "variable", value = "value", -k8Cluster)
+
+ggplot(Life, aes(factor(k8Cluster), value))+
+  geom_bar(stat='identity') + xlab("Clusters") +
+  facet_wrap(~variable,  ncol=2, scales = "free_y") +  
+  geom_text(aes(label = round(value, digits = 1)), size = 2, colour = "white", 
+            position = position_stack(vjust = 0.5)) +
+  ggtitle("Life Conditions Cluster Means")
+```
+
+From the plot we learn that clusters 4 and 6 both prefer city areas with mid-to-lower levels of population. In case of cluster 4 the average household sizes in the residential areas are rather small, while in case of cluster 6 we observe larger compounds with by average 4 members living in one household. Looking at income distributions and the area’s soil values, we learn that cluster 4 lives in rather richer neighborhoods with higher soil prices, whereas cluster 6 members prefer middle-class neighborhoods with affordable, low soil prices. 
+
+
+---
+
+**Question**: Combining the information at hand, how do you depict members of clusters 4 and 6 and how do you believe they differ from each other? Can you similarly come up with personae for other clusters?
+
+---
+
+
+### Taking Actions from Insights
+
+The results of the cluster analysis allow Stratton AE Banking to take several important marketing actions. First, the profound understanding of the different available market segments, allows the joint-venture to understand the different types of customers available and to determine, which segments in the existing customer base should build the base for future marketing activities. 
+
+To develop suitable positionings for each cluster and subsequently develop communication campaigns, one can use the further insights from the cluster analysis and the comparison of the cluster-specific means of the remaining variables. 
+
+Furthermore, the results of the cluster analysis can be used to also predict the interests and preferences of newly incoming customers. Here, one may use the existing information available and calculate the Euclidean distances between the new customer and the centers (i.e. the means of each dimension) of each cluster. The customer will likely belong to the cluster, with the lowest distance.
+
+

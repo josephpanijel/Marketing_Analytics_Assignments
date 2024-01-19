@@ -1,0 +1,130 @@
+---
+title: "Spotify Clustering"
+output: html_document
+date: "2023-10-09"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+```{r spotify}
+library(readr)
+table_spotify <- read_csv("/Users/jojolapatate/Downloads/ML_spotify_data.csv")
+#table_spotify
+```
+
+
+```{r new chunks}
+class(table_spotify)
+```
+
+
+```{r pressure, echo=FALSE}
+
+scaled_spotify <- table_spotify
+columns_scaled <- c('popularity', 'danceability', 'valence', 'energy', 'key', 'liveness', 'loudness', 'speechiness', 'tempo')
+
+scaled_spotify_column <- scale(table_spotify[columns_scaled])
+head(scaled_spotify_column)
+```
+
+
+
+
+```{r pressure, echo=FALSE}
+library(factoextra)
+library(ggplot2)
+factoextra::fviz_nbclust(na.omit(scaled_spotify_column), kmeans, method = "wss", k.max = 15)
+factoextra::fviz_nbclust(na.omit(scaled_spotify_column), kmeans, method = "silhouette", k.max = 15)
+```
+
+```{r pressure, echo=FALSE}
+set.seed(123)
+k3_spotify <- kmeans(scaled_spotify_column, 3)
+k6_spotify <- kmeans(scaled_spotify_column, 6)
+k7_spotify <- kmeans(scaled_spotify_column, 7)
+k8_spotify <- kmeans(scaled_spotify_column, 8)
+
+k3_spotify[["size"]] #size of each clustern, defined automatically with kmeans()
+k3_spotify_size <- data.frame(Size = k3_spotify[["size"]], #new column name
+               Cluster = c("Cluster1", "Cluster2", "Cluster3")) #lines
+
+k6_spotify[["size"]]
+k6_spotify_size <- data.frame(Size = k6_spotify[["size"]], 
+               Cluster = c("Cluster1", "Cluster2", "Cluster3", "Cluster4", "Cluster5", "Cluster6"))
+
+k7_spotify[["size"]]
+k7_spotify_size <- data.frame(Size = k7_spotify[["size"]], 
+               Cluster = c("Cluster1", "Cluster2", "Cluster3", "Cluster4", "Cluster5", "Cluster6", "Cluster7"))
+
+
+k8_spotify_size <- data.frame(Size = k8_spotify[["size"]], 
+               Cluster = c("Cluster1", "Cluster2", "Cluster3", "Cluster4", "Cluster5", "Cluster6", "Cluster7", "Cluster8"))
+
+
+ggplot(k3_spotify_size, aes(x=factor(Cluster), y=Size)) + 
+  geom_col(fill=hcl(195, 100, 65)) + geom_text(aes(label=Size), vjust=0) + 
+  ggtitle("Cluster sizes k-means 3-cluster solution")
+```
+
+
+```{r pressure, echo=FALSE}
+library(dplyr)
+
+table_spotify$k3_clusters = k3_spotify[["cluster"]] #nouvelle colonne based on cluster vector
+table_spotify$k6_clusters = k6_spotify[["cluster"]]
+table_spotify$k7_clusters = k7_spotify[["cluster"]]
+table_spotify$k8_clusters = k8_spotify[["cluster"]]
+
+#nouveau df avec group by nvelle colonne
+summarystats.percluster_k3 = table_spotify %>% group_by(k3_clusters) %>% 
+  summarise_if(is.numeric, mean, na.rm = TRUE)
+
+summarystats.percluster_k6 = table_spotify %>% group_by(k6_clusters) %>% 
+  summarise_if(is.numeric, mean, na.rm = TRUE)
+
+summarystats.percluster_k7 = table_spotify %>% group_by(k7_clusters) %>% 
+  summarise_if(is.numeric, mean, na.rm = TRUE)
+
+summarystats.percluster_k8 = table_spotify %>% group_by(k8_clusters) %>% 
+  summarise_if(is.numeric, mean, na.rm = TRUE)
+
+head(summarystats.percluster_k5)
+```
+
+
+```{r pressure, echo=FALSE}
+
+library(factoextra)
+fviz_cluster(k3_spotify, scaled_spotify_column, ellipse.type = "norm")
+fviz_cluster(k6_spotify, scaled_spotify_column, ellipse.type = "norm")
+fviz_cluster(k7_spotify, scaled_spotify_column, ellipse.type = "norm")
+fviz_cluster(k8_spotify, scaled_spotify_column, ellipse.type = "norm")
+
+
+
+```
+```{r eval=TRUE, echo=TRUE}
+summarystats.percluster_k3
+```
+
+```{r eval=TRUE, echo=TRUE}
+library(dplyr)
+library(tidyr)
+
+sumstats <- summarystats.percluster_k3 %>% 
+  select(k3_clusters, danceability, valence, energy, key, liveness, loudness) %>%
+  gather(key = "variable", value = "value", -k3_clusters)
+
+ggplot(data = sumstats, aes(x = factor(k3_clusters), value)) +
+  geom_bar(stat='identity') + xlab("clusters") +
+  facet_wrap(~variable,  ncol=2, scales = "free_y") + 
+  geom_text(aes(label = round(value, digits = 1)), size = 2, colour = "white", 
+            position = position_stack(vjust = 0.5)) +
+  ggtitle("Spotify Cluster Means")
+
+
+```

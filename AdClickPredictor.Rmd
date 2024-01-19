@@ -1,0 +1,267 @@
+---
+title: "AdClickPredictor"
+author: "Alix Vermeulen"
+date: "2024-01-02"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Data Description
+```{r}
+# Load the data from the RData file: load it in your global environment or use 
+training_data = ClickTraining
+test_data = ClickPrediction
+
+# Display the first few rows of the dataset
+head(training_data)
+
+# Display a summary of the loaded dataset
+summary(training_data)
+```
+
+Turn categorial columns into numerical ones.
+
+```{r echo=FALSE}
+# Ensure the dependent variable is a factor for logistic regression
+training_data$Clicks_Conversion <- as.factor(training_data$Clicks_Conversion)
+training_data[sapply(training_data, is.character)] <- lapply(training_data[sapply(training_data, is.character)], as.factor)
+
+# do the same for test data
+test_data[sapply(test_data, is.character)] <- lapply(test_data[sapply(test_data, is.character)], as.factor)
+
+str(training_data)
+```
+We also replace the null values, for Restaurant type, in both datasets
+```{r}
+na_count_train <- colSums(is.na(training_data)) #1848
+print(na_count_train)
+
+na_count_test <- colSums(is.na(test_data)) #197
+print(na_count_test)
+```
+
+```{r}
+#Replace by mode
+freq_restau_train <- table(training_data$Restaurant_Type)
+print(freq_restau_train)
+freq_restau_test <- table(test_data$Restaurant_Type)
+print(freq_restau_test)
+
+training_data$Restaurant_Type[is.na(training_data$Restaurant_Type)] <- 'Burger'
+test_data$Restaurant_Type[is.na(test_data$Restaurant_Type)] <- 'Burger'
+
+```
+## Model 1 - Logistic Regression
+
+```{r echo=FALSE}
+log_reg = glm(Clicks_Conversion ~ Region + Daytime + Carrier + Time_On_Previous_Website + Weekday + Social_Network 
+             + Number_of_Previous_Orders + Restaurant_Type, 
+             data = training_data, 
+             family = "binomial")
+
+summary(log_reg)
+```
+
+
+Strongly correlated variables within the model may cause multicollinearity and thus lead to inflated estimates. To control for multicollinearity we need to activate the performance library and use the collinearity function.
+
+```{r}
+library(performance)
+
+check_collinearity(log_reg)
+```
+All have low correlation so can keep all variables in the model.
+
+
+## Model 2 - Random Forest
+
+```{r}
+library(randomForest)
+
+# Split your data into features and target 
+features_train <- training_data[, -which(names(training_data) == "Clicks_Conversion")]
+target_train <- training_data$Clicks_Conversion
+
+# Train a baseline Random Forest model
+set.seed(1)  # For reproducibility, setting a seed
+rf_model <- randomForest(features_train, target_train, importance = TRUE,ntree = 100)  
+
+# Print the model summary
+print(rf_model)
+
+
+```
+On the training set, using a baseline model, we had an error rate of 5.3%. The confusion matrix indicates to us that there was 21.83% of incorrect classifications for class 0, and 2.25% for class 1. This is largely due to the fact that our classes are severely imbalanced. 
+
+```{r}
+varImpPlot(rf_model)
+```
+Above, we plot the importance of our features in their contribution to the overall performance.
+
+We know split the training data to get a validation set, which will give us insights on how our model can perform on new unseen data.
+
+```{r}
+set.seed(0) 
+library(caret)
+
+# Split into 80% training and 20% validation
+index <- createDataPartition(training_data$Clicks_Conversion, p = 0.8, list = FALSE)
+
+trainval <- training_data[index, ]
+testval <- training_data[-index, ]
+
+#Model on training set
+features_trainval <- trainval[, -which(names(trainval) == "Clicks_Conversion")]
+target_trainval <- trainval$Clicks_Conversion
+
+rf_model <- randomForest(features_trainval, target_trainval, ntree = 100)  
+print(rf_model)
+
+#Predictions on validation set
+
+features_testval <- testval[, -which(names(testval) == "Clicks_Conversion")]
+target_testval <- testval$Clicks_Conversion
+
+predictions <- predict(rf_model, newdata = features_testval)
+error_rate <- mean(predictions != target_testval)*100
+Accuracy <- 100-mean(predictions != target_testval)*100
+cat("Error rate on validation set:", error_rate, "% - Accuracy on validation set:", Accuracy, "%")
+
+```
+Our validation set had an error rate of 5.86%, which is very close from our training set error rate. Therefore, we exclude the risk of overfitting and failing to predict efficiently new data.
+
+
+
+```{r}
+# Grid search
+library(caret)
+
+#Cross validation
+trcontrol <- trainControl(method = "repeatedcv", number = 5, repeats = 2, search = "grid")
+set.seed(1)
+tunegrid <- expand.grid(mtry = 2:5)
+
+#Grid search (only worked with mtry)
+rf_gridsearch <- train(Clicks_Conversion ~ ., data = training_data, method = "rf", metric = "Accuracy", tuneGrid = tunegrid, trControl = trcontrol)
+
+print(rf_gridsearch)
+plot(rf_gridsearch)
+
+
+```
+
+Above, we fine-tune our parameters using grid search. Here, we test different values for mtry, from 2 to 5, which represents the number of features randomly selected that are considered at each split. We use cross validation, repeated twice, to prevent the risk of overfitting and have more reliable estimates. 
+
+We see that there is a real improvement after 2, and the optimal parameter here is mtry = 5.
+
+```{r}
+library(caret)
+
+#Different values to test
+ntrees <- c(100, 200, 400, 600, 1000)
+trcontrol <- trainControl(method = "repeatedcv", number = 5, repeats = 2, search = "grid")
+
+
+trees_tuned <- data.frame(
+  ntree = integer(),
+  accuracy = numeric()
+)
+
+for (n in ntrees) {
+    trees_models <- train(
+      Clicks_Conversion ~ .,
+      data = training_data,
+      method = "rf",
+      metric = "Accuracy",
+      ntree = n,
+      trControl = trcontrol
+    )
+    
+    # Store the values and accuracy in the data frame
+    trees_tuned <- rbind(trees_tuned, data.frame(ntree = n,accuracy = trees_models$results$Accuracy))
+  }
+
+
+```
+
+We performed a similar gridsearch, this time for the parameter ntrees. Nevertheless, the number of trees seems to have low impact on the global accuracy, and we get the best accuracy with 400 trees.
+
+```{r}
+library(dplyr)
+
+mean_accuracy <- trees_tuned %>%
+  group_by(ntree) %>%
+  summarise(mean_accuracy = mean(accuracy))
+
+# Mean accuracy for each 'ntree'
+print(mean_accuracy)
+```
+
+```{r}
+maxnodes <- c(10, 20, 30, 60)
+
+fitControl <- trainControl(
+  method = "repeatedcv",
+  number = 3
+)
+
+nodes_tuned <- data.frame(
+  maxnodes = integer(),
+  accuracy = numeric()
+)
+
+for (mn in maxnodes) {
+  node_model <- train(
+    Clicks_Conversion ~ .,
+    data = training_data,
+    method = "rf",
+    metric = "Accuracy",
+    maxnodes = mn,
+    trControl = fitControl
+  )
+  
+  # Create a temporary data frame to store current model's accuracy
+  temp_df <- data.frame(maxnodes = mn, accuracy = node_model$results$Accuracy)
+  
+  # Bind the temporary data frame to nodes_tuned
+  nodes_tuned <- rbind(nodes_tuned, temp_df)
+}
+
+```
+
+We now do the same for the maximum number of nodes, and see that the mean accuracy is decreased when we set a limit on the maximum nodes. Therefore we keep that value to default, which is unlimited. 
+
+```{r}
+mean_accuracy <- nodes_tuned %>%
+  group_by(maxnodes) %>%
+  summarise(mean_accuracy = mean(accuracy))
+
+# Mean accuracy for each 'max_nodes' values
+print(mean_accuracy)
+```
+
+Finally, we look at our accuracy on the validation training and testing set with our tuned parameters, and see that our accuracy has slightly improved, to 94.35%. This is consistent with the results from parameter tuning. We use mtry = 3 as it lead to better results on the validation set.
+
+```{r}
+set.seed(0) 
+
+rf_model_tuned <- randomForest(features_trainval, target_trainval, ntree = 400, mtry = 3)  
+print(rf_model_tuned)
+
+#Predictions on validation set
+predictions <- predict(rf_model_tuned, newdata = features_testval)
+Accuracy <- 100-mean(predictions != target_testval)*100
+cat("Accuracy on validation set:", Accuracy, "%")
+```
+
+We retrain the model on the entire training set, and make predictions on the entire testing set.
+```{r}
+#Predictions
+rf_model_tuned <- randomForest(features_train, target_train, ntree = 400, mtry = 3)  
+predictions_rf <- predict(rf_model_tuned, test_data)
+head(predictions_rf)
+```
+
